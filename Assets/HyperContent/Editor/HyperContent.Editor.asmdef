@@ -1,0 +1,19 @@
+{
+    "name": "HyperContent.Editor",
+    "rootNamespace": "HyperContent.Editor",
+    "references": [
+        "HyperContent.Runtime",
+        "HyperContent.Shared"
+    ],
+    "includePlatforms": [
+        "Editor"
+    ],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}

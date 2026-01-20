@@ -1,0 +1,16 @@
+{
+    "name": "HyperContent.Runtime",
+    "rootNamespace": "HyperContent",
+    "references": [
+        "HyperContent.Shared"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}
