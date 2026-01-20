@@ -38,6 +38,7 @@
     "com.unity.modules.wind": "1.0.0",
     "com.unity.modules.xr": "1.0.0",
     "com.unity.ide.visualstudio": "file:Packages/com.unity.ide.visualstudio",
-    "com.unity.ide.vscode": "file:Packages/com.unity.ide.vscode"
+    "com.unity.ide.vscode": "file:Packages/com.unity.ide.vscode",
+    "com.unity.addressables": "file:Packages/com.unity.addressables"
   }
 }
