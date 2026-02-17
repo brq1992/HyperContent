@@ -1,4 +1,15 @@
-# 修复记录
+# 变更记录
+
+## 2025-01-29 - 文档整理；移除 Catalog v1
+
+- 重新整理 HyperContent 目录下文档，去除冗余。
+- **移除 Catalog v1**：仅保留 Catalog v2（schemaVersion=2）作为当前 Schema；SPECIFICATION 中删除 v1 Schema 章节，Catalog 结构以 RESOURCE_LOADING_SYSTEM_SPEC 与 CatalogSchemaV2.cs 为准。
+- **README.md**: 精简为入口索引，仅引用当前 Catalog；文档表与快速开始更新。
+- **SPECIFICATION.md**: 删除「Catalog Schema (v1)」整节；目录结构更新为 CatalogSchemaV2、IAssetLoader、LocalContentCatalogV2；章节重新编号。
+- **OWNERS.md** / **OWNER0_GUIDE.md**: Schema 仅引用 CatalogSchemaV2.cs；接口变更控制中 Catalog Schema 仅指 v2。
+- **ARCHITECTURE.md**: 此前已补充 IAssetLoader；内存/错误处理引用 SPECIFICATION。
+
+---
 
 ## 2024-01-XX - 修复编译错误
 

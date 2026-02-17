@@ -1,0 +1,80 @@
+{
+    "catalogHash": [
+        65,
+        200,
+        57,
+        168,
+        245,
+        222,
+        57,
+        30,
+        80,
+        229,
+        66,
+        147,
+        119,
+        211,
+        209,
+        50,
+        188,
+        49,
+        184,
+        3,
+        134,
+        47,
+        26,
+        12,
+        176,
+        186,
+        234,
+        85,
+        240,
+        98,
+        168,
+        196
+    ],
+    "timestamp": 1769810991,
+    "stringTable": [
+        "packed_assets",
+        "Assets/Zombie/Prefabs/Zombie1.prefab",
+        "Assets/Zombie/Prefabs/Zombie2.prefab",
+        "Assets/Zombie/Prefabs/Zombie3.prefab"
+    ],
+    "assetRecords": [
+        {
+            "bundleIndex": 0,
+            "assetPathIndex": 3
+        },
+        {
+            "bundleIndex": 0,
+            "assetPathIndex": 1
+        },
+        {
+            "bundleIndex": 0,
+            "assetPathIndex": 2
+        }
+    ],
+    "nameAliases": [
+        {
+            "nameHash": "0c3735153da002bcb06e2554c3dcbf1acf8dbc9972d5dc67399b0421fa103fcc",
+            "assetRecordIndex": 1
+        },
+        {
+            "nameHash": "63000c62844066599026ac74e7bd97845da0ca4dcd86c1b01a2bd51164a9fd53",
+            "assetRecordIndex": 2
+        },
+        {
+            "nameHash": "893c2ae42c61a0177d3b00ae900a8faa28de6e2ac4a05876b36ebad6d8dcf5be",
+            "assetRecordIndex": 0
+        }
+    ],
+    "bundleRecords": [
+        {
+            "bundleNameIndex": 0,
+            "bundleHash": "796c5f9a0243e4b84cf43d72c6beed47b6c6a47c77b2521c622554c88bc3c59d",
+            "size": 2589746,
+            "dependencies": [],
+            "assetCount": 8
+        }
+    ]
+}

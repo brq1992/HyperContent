@@ -17,7 +17,6 @@ namespace HyperContent.Editor.Build
         public static void AnalyzeDependencies(BuildContext context)
         {
             context.Dependencies.Clear();
-            context.BundleDependencies.Clear();
             
             // Collect all asset GUIDs that are marked
             var allAssetGuids = context.AssetMarkers.Keys.ToList();
@@ -28,8 +27,46 @@ namespace HyperContent.Editor.Build
                 AnalyzeAssetDependencies(assetGuid, context);
             }
             
-            // Build bundle dependencies based on asset dependencies
-            BuildBundleDependencies(context);
+            // Note: Bundle dependencies are calculated after AssignBundles() is called
+            // because we need AssetToBundle mapping first
+        }
+        
+        /// <summary>
+        /// Build bundle dependencies from asset dependencies
+        /// This should be called after AssignBundles() to ensure AssetToBundle is populated
+        /// </summary>
+        public static void BuildBundleDependencies(BuildContext context)
+        {
+            context.BundleDependencies.Clear();
+            
+            foreach (var kvp in context.Dependencies)
+            {
+                var assetGuid = kvp.Key;
+                var dependencies = kvp.Value;
+                
+                // Get bundle for this asset
+                if (!context.AssetToBundle.TryGetValue(assetGuid, out var bundleName))
+                {
+                    continue;
+                }
+                
+                // Find dependencies that are in different bundles
+                foreach (var depGuid in dependencies)
+                {
+                    if (context.AssetToBundle.TryGetValue(depGuid, out var depBundleName))
+                    {
+                        if (depBundleName != bundleName)
+                        {
+                            // Add bundle dependency
+                            if (!context.BundleDependencies.ContainsKey(bundleName))
+                            {
+                                context.BundleDependencies[bundleName] = new HashSet<string>();
+                            }
+                            context.BundleDependencies[bundleName].Add(depBundleName);
+                        }
+                    }
+                }
+            }
         }
         
         /// <summary>
@@ -70,118 +107,33 @@ namespace HyperContent.Editor.Build
             context.Dependencies[assetGuid] = dependencies;
         }
         
-        /// <summary>
-        /// Build bundle dependencies from asset dependencies
-        /// </summary>
-        private static void BuildBundleDependencies(BuildContext context)
-        {
-            foreach (var kvp in context.Dependencies)
-            {
-                var assetGuid = kvp.Key;
-                var dependencies = kvp.Value;
-                
-                // Get bundle for this asset
-                if (!context.AssetToBundle.TryGetValue(assetGuid, out var bundleName))
-                {
-                    continue;
-                }
-                
-                // Find dependencies that are in different bundles
-                foreach (var depGuid in dependencies)
-                {
-                    if (context.AssetToBundle.TryGetValue(depGuid, out var depBundleName))
-                    {
-                        if (depBundleName != bundleName)
-                        {
-                            // Add bundle dependency
-                            if (!context.BundleDependencies.ContainsKey(bundleName))
-                            {
-                                context.BundleDependencies[bundleName] = new HashSet<string>();
-                            }
-                            context.BundleDependencies[bundleName].Add(depBundleName);
-                        }
-                    }
-                }
-            }
-        }
         
         /// <summary>
-        /// Assign assets to bundles based on markers and grouping rules
+        /// Assign assets to bundles using the configured grouping strategy
         /// </summary>
         public static void AssignBundles(BuildContext context)
         {
-            context.AssetToBundle.Clear();
-            context.BundleToAssets.Clear();
+            // Create grouping strategy based on config
+            var strategy = BundleGroupingStrategyFactory.CreateStrategy(context.Config.groupingStrategy);
             
-            foreach (var kvp in context.AssetMarkers)
+            // Validate strategy
+            var validationErrors = strategy.Validate(context);
+            if (validationErrors.Count > 0)
             {
-                var assetGuid = kvp.Key;
-                var marker = kvp.Value;
-                
-                // Determine bundle name
-                string bundleName;
-                
-                if (marker.forceSeparateBundle)
+                foreach (var error in validationErrors)
                 {
-                    // Force separate bundle: use asset key as bundle name
-                    bundleName = SanitizeBundleName(marker.assetKey);
+                    context.Errors.Add(new BuildError(error));
                 }
-                else if (!string.IsNullOrEmpty(marker.bundleGroup))
-                {
-                    // Use bundle group
-                    bundleName = SanitizeBundleName(marker.bundleGroup);
-                }
-                else
-                {
-                    // Default: use asset key as bundle name
-                    bundleName = SanitizeBundleName(marker.assetKey);
-                }
-                
-                // Add asset to bundle
-                if (!context.BundleToAssets.ContainsKey(bundleName))
-                {
-                    context.BundleToAssets[bundleName] = new HashSet<string>();
-                }
-                context.BundleToAssets[bundleName].Add(assetGuid);
-                context.AssetToBundle[assetGuid] = bundleName;
-                
-                // If includeDependencies is true, add dependencies to the same bundle
-                if (context.Config.includeDependencies && context.Dependencies.TryGetValue(assetGuid, out var deps))
-                {
-                    foreach (var depGuid in deps)
-                    {
-                        // Only add if dependency is not already in another bundle
-                        if (!context.AssetToBundle.ContainsKey(depGuid))
-                        {
-                            context.BundleToAssets[bundleName].Add(depGuid);
-                            context.AssetToBundle[depGuid] = bundleName;
-                        }
-                    }
-                }
-            }
-        }
-        
-        /// <summary>
-        /// Sanitize bundle name to ensure it's valid
-        /// </summary>
-        private static string SanitizeBundleName(string name)
-        {
-            if (string.IsNullOrEmpty(name))
-            {
-                return "default_bundle";
+                return;
             }
             
-            // Remove path separators and invalid characters
-            name = name.Replace("/", "_").Replace("\\", "_");
-            name = name.Replace(" ", "_");
-            
-            // Ensure it doesn't exceed max length
-            if (name.Length > HyperContent.Shared.NamingRules.MAX_BUNDLE_NAME_LENGTH)
+            // Assign bundles using strategy
+            if (!strategy.AssignBundles(context))
             {
-                name = name.Substring(0, HyperContent.Shared.NamingRules.MAX_BUNDLE_NAME_LENGTH);
+                context.Errors.Add(new BuildError(
+                    $"Bundle grouping failed using strategy: {strategy.StrategyName}"
+                ));
             }
-            
-            return name.ToLowerInvariant();
         }
     }
 }

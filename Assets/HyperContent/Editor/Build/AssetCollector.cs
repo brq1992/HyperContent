@@ -9,6 +9,7 @@ namespace HyperContent.Editor.Build
 {
     /// <summary>
     /// Collects all assets marked with HyperContentAsset markers
+    /// Resource collection is unified - grouping strategy only determines how to get grouping data
     /// </summary>
     public static class AssetCollector
     {

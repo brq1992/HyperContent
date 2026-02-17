@@ -1,3 +1,7 @@
 Library/
 Logs/
 Temp/
+Assets/Zombie/
+.vscode/
+Unity.Addressables.csproj
+*.csproj

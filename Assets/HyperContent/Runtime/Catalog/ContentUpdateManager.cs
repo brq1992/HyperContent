@@ -58,49 +58,33 @@ namespace HyperContent
                 return result;
             }
             
-            // Compare catalogs and find missing/updated bundles
+            // Compare catalogs and find missing/updated bundles using contentHash (bundleHash) per RESOURCE_LOADING_SYSTEM_SPEC.
+            // Need download iff: remote bundle not present locally OR local contentHash != remote contentHash.
             var bundlesToDownload = new List<BundleInfo>();
             long totalSize = 0;
-            
+
             foreach (var bundleName in _remoteCatalog.GetAllBundleNames())
             {
                 if (!_remoteCatalog.TryGetBundleInfo(bundleName, out var remoteBundleInfo))
-                {
                     continue;
-                }
-                
-                // Check if bundle needs to be downloaded
-                bool needsDownload = false;
-                
-                if (remoteBundleInfo.Location == ContentLocation.Remote)
+
+                if (remoteBundleInfo.Location != ContentLocation.Remote)
+                    continue;
+
+                // contentHash = remote BundleInfo.Hash (same as bundleHash in v2 catalog)
+                string remoteContentHash = remoteBundleInfo.Hash;
+                bool needsDownload;
+
+                if (!_bundleStore.Exists(bundleName))
                 {
-                    // Check if bundle exists locally
-                    if (!_bundleStore.Exists(bundleName))
-                    {
-                        needsDownload = true;
-                    }
-                    else
-                    {
-                        // Check if version or hash changed
-                        if (_currentCatalog.TryGetBundleInfo(bundleName, out var currentBundleInfo))
-                        {
-                            if (currentBundleInfo.Version < remoteBundleInfo.Version ||
-                                currentBundleInfo.Hash != remoteBundleInfo.Hash)
-                            {
-                                needsDownload = true;
-                            }
-                        }
-                        else
-                        {
-                            // Bundle not in current catalog, but exists locally - verify hash
-                            if (!_bundleStore.VerifyHash(bundleName, remoteBundleInfo.Hash))
-                            {
-                                needsDownload = true;
-                            }
-                        }
-                    }
+                    needsDownload = true;
                 }
-                
+                else
+                {
+                    // Bundle exists: need download only if contentHash differs (VerifyHash returns false on mismatch or corruption)
+                    needsDownload = string.IsNullOrEmpty(remoteContentHash) || !_bundleStore.VerifyHash(bundleName, remoteContentHash);
+                }
+
                 if (needsDownload)
                 {
                     bundlesToDownload.Add(remoteBundleInfo);
@@ -128,28 +112,20 @@ namespace HyperContent
                 return;
             }
             
-            // Get bundles to download
+            // Get bundles to download: contentHash-based (need download if missing or hash mismatch)
             var bundlesToDownload = new List<BundleInfo>();
             foreach (var bundleName in _remoteCatalog.GetAllBundleNames())
             {
-                if (_remoteCatalog.TryGetBundleInfo(bundleName, out var bundleInfo) &&
-                    bundleInfo.Location == ContentLocation.Remote)
-                {
-                    bool needsDownload = !_bundleStore.Exists(bundleName);
-                    
-                    if (!needsDownload && _currentCatalog.TryGetBundleInfo(bundleName, out var currentInfo))
-                    {
-                        needsDownload = currentInfo.Version < bundleInfo.Version ||
-                                       currentInfo.Hash != bundleInfo.Hash;
-                    }
-                    
-                    if (needsDownload)
-                    {
-                        bundlesToDownload.Add(bundleInfo);
-                    }
-                }
+                if (!_remoteCatalog.TryGetBundleInfo(bundleName, out var bundleInfo) || bundleInfo.Location != ContentLocation.Remote)
+                    continue;
+
+                bool needsDownload = !_bundleStore.Exists(bundleName) ||
+                    string.IsNullOrEmpty(bundleInfo.Hash) ||
+                    !_bundleStore.VerifyHash(bundleName, bundleInfo.Hash);
+                if (needsDownload)
+                    bundlesToDownload.Add(bundleInfo);
             }
-            
+
             // Start downloading
             var result = new UpdateResult
             {
@@ -277,28 +253,20 @@ namespace HyperContent
                 TotalSizeBytes = checkResult.TotalSizeBytes
             };
             
-            // Get bundles to download
+            // Get bundles to download: contentHash-based
             var bundlesToDownload = new List<BundleInfo>();
             foreach (var bundleName in _remoteCatalog.GetAllBundleNames())
             {
-                if (_remoteCatalog.TryGetBundleInfo(bundleName, out var bundleInfo) &&
-                    bundleInfo.Location == ContentLocation.Remote)
-                {
-                    bool needsDownload = !_bundleStore.Exists(bundleName);
-                    
-                    if (!needsDownload && _currentCatalog.TryGetBundleInfo(bundleName, out var currentInfo))
-                    {
-                        needsDownload = currentInfo.Version < bundleInfo.Version ||
-                                       currentInfo.Hash != bundleInfo.Hash;
-                    }
-                    
-                    if (needsDownload)
-                    {
-                        bundlesToDownload.Add(bundleInfo);
-                    }
-                }
+                if (!_remoteCatalog.TryGetBundleInfo(bundleName, out var bundleInfo) || bundleInfo.Location != ContentLocation.Remote)
+                    continue;
+
+                bool needsDownload = !_bundleStore.Exists(bundleName) ||
+                    string.IsNullOrEmpty(bundleInfo.Hash) ||
+                    !_bundleStore.VerifyHash(bundleName, bundleInfo.Hash);
+                if (needsDownload)
+                    bundlesToDownload.Add(bundleInfo);
             }
-            
+
             // Download bundles
             foreach (var bundle in bundlesToDownload)
             {

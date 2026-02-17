@@ -33,14 +33,20 @@
   - 职责: 对外API，提供LoadAsset接口
   - 实现: ResourceProvider (POC)
 
+- **IAssetLoader**: 按 key 加载资产
+  - 职责: 统一 `Load<T>(string key)`，支持 GUID（32 字符）或 Name（经 nameHash 解析）
+  - 实现: AssetLoaderV2 等（见 RESOURCE_LOADING_SYSTEM_SPEC.md）
+
 ### 2. Data Structures (数据结构层)
 
 运行期数据结构，位于 `Runtime/Data/` 和 `Shared/`:
 
 - **ContentLocation**: 内容位置枚举
 - **BundleInfo**: Bundle元信息
-- **Handle**: 异步操作句柄基类
+- **Handle** / **AssetHandle&lt;T&gt;** / **InstanceHandle**: 异步操作句柄
 - **FetchResult**: 获取操作结果
+
+（命名、错误码、日志、RefCount 等详见 SPECIFICATION.md 与 Constants.cs。）
 
 ### 3. Implementations (实现层)
 
@@ -124,15 +130,13 @@ AssetBundle.LoadAsset<T>()
 
 ## 内存管理
 
-- **RefCount机制**: 每个资产维护引用计数
-- **Bundle卸载**: 当Bundle内所有资产RefCount归零时卸载
-- **缓存策略**: BundleStore管理本地缓存大小
+- **RefCount机制**: 每个资产维护引用计数；Bundle 内资产 RefCount 均归零时卸载。详见 SPECIFICATION.md §6。
+- **缓存策略**: BundleStore 管理本地缓存大小。
 
 ## 错误处理
 
-- **错误码**: 统一的错误码定义（见Constants.cs）
-- **日志**: 结构化日志字段（见LogFields）
-- **异常**: 接口方法返回bool或使用Result模式，避免抛出异常
+- **错误码与日志**: 见 SPECIFICATION.md §4、§5 与 Constants.cs。
+- **异常**: 接口方法返回 bool 或使用 Result/Handle 模式，避免抛出异常。
 
 ## 性能考虑
 

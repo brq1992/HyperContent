@@ -3,7 +3,8 @@
     "rootNamespace": "HyperContent.Editor",
     "references": [
         "HyperContent.Runtime",
-        "HyperContent.Shared"
+        "HyperContent.Shared",
+        "Unity.Addressables.Editor"
     ],
     "includePlatforms": [
         "Editor"

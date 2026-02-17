@@ -7,101 +7,111 @@ namespace HyperContent.Editor.Build
 {
     /// <summary>
     /// Main builder class that orchestrates the entire build process
+    /// Uses grouping tools and build executors for modular architecture
     /// </summary>
     public static class HyperContentBuilder
     {
         /// <summary>
-        /// Build HyperContent bundles and catalog
+        /// Build HyperContent bundles and catalog using grouping tool and build executor
         /// </summary>
         public static BuildResult Build(BuildConfig config)
         {
-            var context = new BuildContext
-            {
-                Config = config,
-                Report = config.generateReport ? new BuildReport() : null
-            };
-            
             try
             {
                 Debug.Log("[HyperContent] Starting build process...");
                 
-                // Step 1: Collect all marked assets
-                Debug.Log("[HyperContent] Step 1: Collecting assets...");
-                AssetCollector.CollectAssets(context);
+                // Step 1: Get grouping tool
+                var groupingTool = BuildToolFactory.GetGroupingTool(config.groupingToolId);
+                Debug.Log($"[HyperContent] Using grouping tool: {groupingTool.ToolName}");
                 
-                if (context.Errors.Count > 0)
+                // Step 2: Validate grouping tool
+                var toolValidationErrors = groupingTool.Validate(config);
+                if (toolValidationErrors.Count > 0)
                 {
+                    var context = new BuildContext { Config = config };
+                    foreach (var error in toolValidationErrors)
+                    {
+                        context.Errors.Add(new BuildError(error));
+                    }
                     LogErrors(context);
-                    return BuildResult.Failure(context, "Asset collection failed");
+                    return BuildResult.Failure(context, "Grouping tool validation failed");
                 }
                 
-                Debug.Log($"[HyperContent] Collected {context.AssetMarkers.Count} assets");
+                // Step 3: Generate build plan
+                Debug.Log("[HyperContent] Generating build plan...");
+                var plan = groupingTool.GeneratePlan(config);
                 
-                // Step 2: Analyze dependencies
-                Debug.Log("[HyperContent] Step 2: Analyzing dependencies...");
-                DependencyAnalyzer.AnalyzeDependencies(context);
-                
-                // Step 3: Assign assets to bundles
-                Debug.Log("[HyperContent] Step 3: Assigning bundles...");
-                DependencyAnalyzer.AssignBundles(context);
-                
-                Debug.Log($"[HyperContent] Created {context.BundleToAssets.Count} bundles");
-                
-                // Step 4: Validate before build
-                Debug.Log("[HyperContent] Step 4: Validating build configuration...");
-                if (!BuildValidator.Validate(context))
+                if (plan.Errors.Count > 0)
                 {
+                    var context = new BuildContext
+                    {
+                        Config = config,
+                        Errors = plan.Errors,
+                        Warnings = plan.Warnings
+                    };
                     LogErrors(context);
-                    return BuildResult.Failure(context, "Build validation failed");
+                    return BuildResult.Failure(context, "Build plan generation failed");
                 }
                 
-                // Step 5: Build bundles
-                Debug.Log("[HyperContent] Step 5: Building AssetBundles...");
-                if (!BundleBuilder.BuildBundles(context))
+                Debug.Log($"[HyperContent] Build plan generated: {plan.BundleToAssets.Count} bundles, {plan.AssetMarkers.Count} assets");
+                
+                // Step 4: Get build executor
+                var executor = BuildToolFactory.GetBuildExecutor(config.buildExecutorId);
+                Debug.Log($"[HyperContent] Using build executor: {executor.ExecutorName}");
+                
+                // Step 5: Validate executor
+                var executorValidationErrors = executor.Validate(plan, config);
+                if (executorValidationErrors.Count > 0)
                 {
+                    var context = new BuildContext
+                    {
+                        Config = config,
+                        Errors = plan.Errors,
+                        Warnings = plan.Warnings
+                    };
+                    foreach (var error in executorValidationErrors)
+                    {
+                        context.Errors.Add(new BuildError(error));
+                    }
                     LogErrors(context);
-                    return BuildResult.Failure(context, "Bundle build failed");
+                    return BuildResult.Failure(context, "Build executor validation failed");
                 }
                 
-                // Step 6: Generate catalog
-                Debug.Log("[HyperContent] Step 6: Generating catalog...");
-                if (!CatalogGenerator.GenerateCatalog(context))
-                {
-                    LogErrors(context);
-                    return BuildResult.Failure(context, "Catalog generation failed");
-                }
-                
-                // Step 7: Final validation
-                Debug.Log("[HyperContent] Step 7: Final validation...");
-                BuildValidator.Validate(context);
-                
-                // Step 8: Generate report
-                if (config.generateReport)
-                {
-                    Debug.Log("[HyperContent] Step 8: Generating build report...");
-                    BuildReportGenerator.GenerateReport(context);
-                }
+                // Step 6: Execute build
+                Debug.Log("[HyperContent] Executing build...");
+                var result = executor.Execute(plan, config);
                 
                 // Log warnings
-                if (context.Warnings.Count > 0)
+                if (result.Context.Warnings.Count > 0)
                 {
-                    LogWarnings(context);
+                    LogWarnings(result.Context);
                 }
                 
                 // Log errors if any
-                if (context.Errors.Count > 0)
+                if (result.Context.Errors.Count > 0)
                 {
-                    LogErrors(context);
-                    return BuildResult.Failure(context, "Build completed with errors");
+                    LogErrors(result.Context);
                 }
                 
-                Debug.Log("[HyperContent] Build completed successfully!");
-                return BuildResult.Success(context);
+                if (result.IsSuccess)
+                {
+                    Debug.Log("[HyperContent] Build completed successfully!");
+                }
+                else
+                {
+                    Debug.LogError($"[HyperContent] Build failed: {result.Message}");
+                }
+                
+                return result;
             }
             catch (Exception e)
             {
                 Debug.LogError($"[HyperContent] Build failed with exception: {e}");
-                context.Errors.Add(new BuildError($"Build exception: {e.Message}"));
+                var context = new BuildContext
+                {
+                    Config = config,
+                    Errors = { new BuildError($"Build exception: {e.Message}") }
+                };
                 return BuildResult.Failure(context, $"Build exception: {e.Message}");
             }
         }

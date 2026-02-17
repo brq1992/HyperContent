@@ -1,0 +1,12 @@
+{
+    "outputDirectory": "Assets/StreamingAssets",
+    "catalogName": "HyperContent_Catalog",
+    "buildTarget": 13,
+    "compressionType": 1,
+    "includeDependencies": true,
+    "forceRebuild": false,
+    "generateReport": true,
+    "groupingStrategy": 0,
+    "groupingToolId": "addressable",
+    "buildExecutorId": "default"
+}

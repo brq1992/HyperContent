@@ -1,81 +1,37 @@
 # HyperContent
 
-类似Addressable的资源管理系统，v1版本。
+类似 Addressables 的资源管理系统，支持 Catalog（GUID/Name 加载）与构建期校验。
+
+## 文档索引
+
+| 文档 | 说明 |
+|------|------|
+| [SPECIFICATION.md](SPECIFICATION.md) | 规范：命名、错误码、RefCount、目录结构（Catalog Schema 见 RESOURCE_LOADING_SYSTEM_SPEC） |
+| [ARCHITECTURE.md](ARCHITECTURE.md) | 架构：模块划分、数据流、扩展点 |
+| [OWNERS.md](OWNERS.md) | Owner 职责划分与接口变更控制 |
+| [Editor/QUICK_START.md](Editor/QUICK_START.md) | 构建系统快速开始（标记资源、构建、验证） |
+| [Editor/BUILD_SYSTEM.md](Editor/BUILD_SYSTEM.md) | 构建系统详细说明 |
+| [RESOURCE_LOADING_SYSTEM_SPEC.md](RESOURCE_LOADING_SYSTEM_SPEC.md) | Catalog Schema、IAssetLoader、GUID/Name 加载与运行时查找 |
 
 ## 架构概览
 
-HyperContent采用模块化设计，核心接口定义在`Runtime/Core/`目录下：
+核心接口定义在 `Runtime/Core/`：
 
-- **IContentCatalog**: Catalog管理接口
-- **IBundleStore**: Bundle存储接口
-- **IBundleTransport**: Bundle传输接口（下载/上传）
-- **IBundleLoader**: Bundle加载接口（Unity AssetBundle）
-- **IResourceProvider**: 资源提供接口（对外API）
+- **IContentCatalog** - Catalog 管理
+- **IBundleStore** - Bundle 存储
+- **IBundleTransport** - Bundle 传输（下载/上传）
+- **IBundleLoader** - Bundle 加载（Unity AssetBundle）
+- **IResourceProvider** - 资源提供（对外 API）
+- **IAssetLoader** - 按 GUID/Name 加载（`Load<T>(string key)`，见 RESOURCE_LOADING_SYSTEM_SPEC）
+
+Catalog 与 Schema：见 [RESOURCE_LOADING_SYSTEM_SPEC.md](RESOURCE_LOADING_SYSTEM_SPEC.md) 与 `Runtime/Catalog/CatalogSchemaV2.cs`（schemaVersion=2）。
 
 ## 快速开始
 
-### 1. 创建Catalog文件
-
-在`Assets/StreamingAssets/`目录下创建`test.catalog.json`:
-
-```json
-{
-  "version": 1,
-  "name": "test_catalog",
-  "timestamp": 1234567890,
-  "assetToBundle": {
-    "test_sprite": "test_bundle"
-  },
-  "bundles": {
-    "test_bundle": {
-      "name": "test_bundle",
-      "size": 1024,
-      "hash": "",
-      "version": 1,
-      "location": "StreamingAssets",
-      "remoteUrl": "",
-      "localPath": "test_bundle.bundle",
-      "dependencies": [],
-      "assetKeys": ["test_sprite"]
-    }
-  }
-}
-```
-
-### 2. 创建测试Bundle
-
-使用Unity的AssetBundle构建系统创建Bundle，放在`StreamingAssets/`目录。
-
-### 3. 使用代码
-
-```csharp
-using HyperContent;
-using UnityEngine;
-
-public class TestScript : MonoBehaviour
-{
-    void Start()
-    {
-        // 初始化
-        if (HyperContentManager.Instance.Initialize("test.catalog.json"))
-        {
-            // 加载资源
-            var sprite = HyperContentManager.ResourceProvider.LoadAsset<Sprite>("test_sprite");
-            if (sprite != null)
-            {
-                Debug.Log("Asset loaded successfully!");
-            }
-        }
-    }
-}
-```
-
-## 项目结构
-
-详见 [SPECIFICATION.md](SPECIFICATION.md)
+1. **构建**：按 [Editor/QUICK_START.md](Editor/QUICK_START.md) 标记资源并构建，得到 `.catalog.json` 与 `.bundle`。
+2. **运行期**：Catalog 放 `StreamingAssets/`，Bundle 同目录或按 Catalog 配置；初始化与加载示例见 [SPECIFICATION.md §6](SPECIFICATION.md)。
 
 ## 开发规范
 
-- 所有接口变更必须经过Owner0 Code Review
-- 遵循命名规则和错误码规范
-- 使用结构化日志字段
+- 接口与 Schema 变更须经 Owner0 Review，详见 [OWNERS.md](OWNERS.md)。
+- 命名、错误码、日志字段见 [SPECIFICATION.md](SPECIFICATION.md) 与 `Shared/Constants.cs`。

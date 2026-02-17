@@ -1,4 +1,5 @@
 using System.IO;
+using System.Linq;
 using HyperContent.Editor.Build;
 using UnityEditor;
 using UnityEngine;
@@ -50,12 +51,118 @@ namespace HyperContent.Editor
             // Build Settings
             EditorGUILayout.LabelField("Build Settings", EditorStyles.boldLabel);
             _config.buildTarget = (BuildTarget)EditorGUILayout.EnumPopup("Build Target", _config.buildTarget);
-            _config.compressionType = (BundleCompressionType)EditorGUILayout.EnumPopup("Compression", _config.compressionType);
+            
+            // Compression is determined by grouping tool, show info from plan if available
+            EditorGUILayout.BeginHorizontal();
+            EditorGUILayout.LabelField("Compression", GUILayout.Width(EditorGUIUtility.labelWidth));
+            EditorGUILayout.LabelField("(Determined by Grouping Tool)", EditorStyles.wordWrappedLabel);
+            EditorGUILayout.EndHorizontal();
+            
+            // Show compression info from plan if available
+            if (Application.isPlaying == false)
+            {
+                try
+                {
+                    var groupingTool = BuildToolFactory.GetGroupingTool(_config.groupingToolId);
+                    var plan = groupingTool.GeneratePlan(_config);
+                    if (plan.BundleCompression.Count > 0)
+                    {
+                        var uniqueCompressions = plan.BundleCompression.Values.Distinct().ToList();
+                        var compressionInfo = string.Join(", ", uniqueCompressions);
+                        EditorGUILayout.HelpBox($"Compression types in plan: {compressionInfo}", MessageType.Info);
+                    }
+                    else
+                    {
+                        EditorGUILayout.HelpBox("Compression will use default from BuildConfig", MessageType.Info);
+                    }
+                }
+                catch
+                {
+                    // Ignore errors when generating plan for preview
+                }
+            }
+            
             _config.includeDependencies = EditorGUILayout.Toggle("Include Dependencies", _config.includeDependencies);
             _config.forceRebuild = EditorGUILayout.Toggle("Force Rebuild", _config.forceRebuild);
             _config.generateReport = EditorGUILayout.Toggle("Generate Report", _config.generateReport);
             
             EditorGUILayout.Space();
+            
+            // Grouping Tool
+            EditorGUILayout.LabelField("Grouping Tool", EditorStyles.boldLabel);
+            var groupingTools = BuildToolFactory.GetAllGroupingTools();
+            var groupingToolIds = groupingTools.Keys.ToList();
+            var currentGroupingToolIndex = groupingToolIds.IndexOf(_config.groupingToolId);
+            if (currentGroupingToolIndex < 0) currentGroupingToolIndex = 0;
+            
+            var newGroupingToolIndex = EditorGUILayout.Popup(
+                "Grouping Tool",
+                currentGroupingToolIndex,
+                groupingToolIds.Select(id => $"{id} - {groupingTools[id].ToolName}").ToArray()
+            );
+            
+            if (newGroupingToolIndex != currentGroupingToolIndex)
+            {
+                _config.groupingToolId = groupingToolIds[newGroupingToolIndex];
+            }
+            
+            // Show tool description
+            var selectedGroupingTool = BuildToolFactory.GetGroupingTool(_config.groupingToolId);
+            EditorGUILayout.HelpBox(
+                $"Tool: {selectedGroupingTool.ToolName}\n\n{selectedGroupingTool.Description}",
+                MessageType.Info
+            );
+            
+            EditorGUILayout.Space();
+            
+            // Build Executor
+            EditorGUILayout.LabelField("Build Executor", EditorStyles.boldLabel);
+            var executors = BuildToolFactory.GetAllBuildExecutors();
+            var executorIds = executors.Keys.ToList();
+            var currentExecutorIndex = executorIds.IndexOf(_config.buildExecutorId);
+            if (currentExecutorIndex < 0) currentExecutorIndex = 0;
+            
+            var newExecutorIndex = EditorGUILayout.Popup(
+                "Build Executor",
+                currentExecutorIndex,
+                executorIds.Select(id => $"{id} - {executors[id].ExecutorName}").ToArray()
+            );
+            
+            if (newExecutorIndex != currentExecutorIndex)
+            {
+                _config.buildExecutorId = executorIds[newExecutorIndex];
+            }
+            
+            // Show executor description
+            var selectedExecutor = BuildToolFactory.GetBuildExecutor(_config.buildExecutorId);
+            EditorGUILayout.HelpBox(
+                $"Executor: {selectedExecutor.ExecutorName}\n\n{selectedExecutor.Description}",
+                MessageType.Info
+            );
+            
+            EditorGUILayout.Space();
+            
+            // Grouping Strategy (for backward compatibility, shown when using default grouping tool)
+            if (_config.groupingToolId == "default")
+            {
+                EditorGUILayout.LabelField("Grouping Strategy", EditorStyles.boldLabel);
+                _config.groupingStrategy = (BundleGroupingStrategyType)EditorGUILayout.EnumPopup(
+                    "Strategy", 
+                    _config.groupingStrategy
+                );
+                
+                // Show strategy description
+                var strategyName = BundleGroupingStrategyFactory.GetStrategyName(_config.groupingStrategy);
+                EditorGUILayout.HelpBox(
+                    $"Using: {strategyName}\n\n" +
+                    (_config.groupingStrategy == BundleGroupingStrategyType.Addressable
+                        ? "Assets will be grouped based on their Addressable group membership."
+                        : "Assets will be grouped based on HyperContentAsset marker's bundleGroup field."),
+                    MessageType.Info
+                );
+                
+                EditorGUILayout.Space();
+            }
             
             // Advanced Settings
             _showAdvanced = EditorGUILayout.Foldout(_showAdvanced, "Advanced Settings");
@@ -153,35 +260,41 @@ namespace HyperContent.Editor
         
         private void ValidateOnly()
         {
-            var context = new BuildContext
+            // Get grouping tool
+            var groupingTool = BuildToolFactory.GetGroupingTool(_config.groupingToolId);
+            
+            // Validate tool
+            var toolValidationErrors = groupingTool.Validate(_config);
+            if (toolValidationErrors.Count > 0)
             {
-                Config = _config
-            };
+                EditorUtility.DisplayDialog("Validation Failed", 
+                    $"Grouping tool validation failed:\n\n" +
+                    string.Join("\n", toolValidationErrors),
+                    "OK");
+                return;
+            }
             
-            // Collect assets
-            AssetCollector.CollectAssets(context);
+            // Generate plan
+            var plan = groupingTool.GeneratePlan(_config);
             
-            // Analyze dependencies
-            DependencyAnalyzer.AnalyzeDependencies(context);
+            // Get executor
+            var executor = BuildToolFactory.GetBuildExecutor(_config.buildExecutorId);
             
-            // Assign bundles
-            DependencyAnalyzer.AssignBundles(context);
+            // Validate executor
+            var executorValidationErrors = executor.Validate(plan, _config);
             
-            // Validate
-            var isValid = BuildValidator.Validate(context);
-            
-            if (isValid && context.Errors.Count == 0)
+            if (plan.Errors.Count == 0 && executorValidationErrors.Count == 0)
             {
                 EditorUtility.DisplayDialog("Validation Success", 
                     $"Validation passed!\n\n" +
-                    $"Assets: {context.AssetMarkers.Count}\n" +
-                    $"Bundles: {context.BundleToAssets.Count}\n" +
-                    $"Warnings: {context.Warnings.Count}", "OK");
+                    $"Assets: {plan.AssetMarkers.Count}\n" +
+                    $"Bundles: {plan.BundleToAssets.Count}\n" +
+                    $"Warnings: {plan.Warnings.Count}", "OK");
             }
             else
             {
-                var errorCount = context.Errors.Count;
-                var warningCount = context.Warnings.Count;
+                var errorCount = plan.Errors.Count + executorValidationErrors.Count;
+                var warningCount = plan.Warnings.Count;
                 
                 EditorUtility.DisplayDialog("Validation Failed", 
                     $"Validation found issues:\n\n" +
@@ -196,12 +309,15 @@ namespace HyperContent.Editor
             return new BuildConfig
             {
                 outputDirectory = "Assets/StreamingAssets",
-                catalogName = "default_catalog",
+                catalogName = "HyperContent_Catalog",
                 buildTarget = EditorUserBuildSettings.activeBuildTarget,
                 compressionType = BundleCompressionType.Lz4,
                 includeDependencies = true,
                 forceRebuild = false,
-                generateReport = true
+                generateReport = true,
+                groupingStrategy = BundleGroupingStrategyType.MarkerBased,
+                groupingToolId = "default",
+                buildExecutorId = "default"
             };
         }
         

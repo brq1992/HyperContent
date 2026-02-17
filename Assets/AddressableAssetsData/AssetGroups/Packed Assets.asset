@@ -1,0 +1,40 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: bbb281ee3bf0b054c82ac2347e9e782c, type: 3}
+  m_Name: Packed Assets
+  m_EditorClassIdentifier: Unity.Addressables.Editor::UnityEditor.AddressableAssets.Settings.AddressableAssetGroup
+  m_GroupName: Packed Assets
+  m_Data:
+    m_SerializedData: []
+  m_GUID: b6dfdb2de558655469642e17b7530dd0
+  m_SerializeEntries:
+  - m_GUID: 6dc4cf4496348884d8ee27743ae38562
+    m_Address: Assets/Zombie/Prefabs/Zombie1.prefab
+    m_ReadOnly: 0
+    m_SerializedLabels: []
+    FlaggedDuringContentUpdateRestriction: 0
+  - m_GUID: d58be77cba3adf54cb14b15052b86514
+    m_Address: Assets/Zombie/Prefabs/Zombie2.prefab
+    m_ReadOnly: 0
+    m_SerializedLabels: []
+    FlaggedDuringContentUpdateRestriction: 0
+  - m_GUID: 06cb2b131fe009c47a523671a8fa9ed8
+    m_Address: Assets/Zombie/Prefabs/Zombie3.prefab
+    m_ReadOnly: 0
+    m_SerializedLabels: []
+    FlaggedDuringContentUpdateRestriction: 0
+  m_ReadOnly: 0
+  m_Settings: {fileID: 11400000, guid: a982f189b8795ca489d97f33402ef730, type: 2}
+  m_SchemaSet:
+    m_Schemas:
+    - {fileID: 11400000, guid: 09062456ac23e9a4184693201d3cca48, type: 2}
+    - {fileID: 11400000, guid: 3dfd05f29d6964f4db72815cc329d28a, type: 2}

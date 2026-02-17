@@ -62,7 +62,7 @@
 **功能特性**:
 - ✅ 从远程URL拉取Catalog
 - ✅ 本地缓存Catalog（1小时有效期）
-- ✅ Remote Catalog覆盖Local Catalog（按Owner0 v1定义）
+- ✅ Remote Catalog覆盖Local Catalog（按 Owner0 规范）
 - ✅ 自动回退机制（远程失败时使用缓存或本地Catalog）
 - ✅ 原子写入缓存文件
 - ✅ Catalog验证
@@ -231,7 +231,7 @@ updateManager.UpdateContentAsync(
 3. **LRU清理**: 基于最后访问时间的清理策略，自动管理缓存大小
 4. **错误恢复**: 多层回退机制，确保系统稳定性
 5. **并发控制**: 下载队列管理，避免资源竞争
-6. **远程覆盖**: Remote Catalog始终优先，符合Owner0 v1定义
+6. **远程覆盖**: Remote Catalog 始终优先，符合 Owner0 规范
 
 ## 注意事项
 

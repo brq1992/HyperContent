@@ -1,0 +1,9 @@
+ManifestFileVersion: 0
+UnityVersion: 6000.3.2f1
+CRC: 3955626374
+HashAppended: 0
+AssetBundleManifest:
+  AssetBundleInfos:
+    Info_0:
+      Name: packed_assets
+      Dependencies: {}

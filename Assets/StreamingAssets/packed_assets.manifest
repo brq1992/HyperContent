@@ -1,0 +1,43 @@
+ManifestFileVersion: 0
+UnityVersion: 6000.3.2f1
+CRC: 1550320308
+Hashes:
+  AssetFileHash:
+    serializedVersion: 2
+    Hash: 42f213113a9209dc435a764403a17a25
+  TypeTreeHash:
+    serializedVersion: 2
+    Hash: a6defcf0622494cc65bd908a406865f2
+  IncrementalBuildHash:
+    serializedVersion: 2
+    Hash: 24129df47128731fef04a049f3f14c63
+HashAppended: 0
+ClassTypes:
+- Class: 1
+  Script: {instanceID: 0}
+- Class: 4
+  Script: {instanceID: 0}
+- Class: 21
+  Script: {instanceID: 0}
+- Class: 28
+  Script: {instanceID: 0}
+- Class: 43
+  Script: {instanceID: 0}
+- Class: 48
+  Script: {instanceID: 0}
+- Class: 74
+  Script: {instanceID: 0}
+- Class: 90
+  Script: {instanceID: 0}
+- Class: 91
+  Script: {instanceID: 0}
+- Class: 95
+  Script: {instanceID: 0}
+- Class: 137
+  Script: {instanceID: 0}
+SerializeReferenceClassIdentifiers: []
+Assets:
+- Assets/Zombie/Prefabs/Zombie3.prefab
+- Assets/Zombie/Prefabs/Zombie1.prefab
+- Assets/Zombie/Prefabs/Zombie2.prefab
+Dependencies: []

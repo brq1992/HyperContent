@@ -1,0 +1,21 @@
+{
+    "name": "Assembly_Editor",
+    "rootNamespace": "",
+    "references": [
+        "GUID:8d840a46d3ec010478f8ff159bb9a655",
+        "GUID:21164dc4b881c244296b1d7eab39005e",
+        "GUID:4253e3d09a7b66744957e4b69f2bd16f",
+        "Unity.Addressables.Editor"
+    ],
+    "includePlatforms": [
+        "Editor"
+    ],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}

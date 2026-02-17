@@ -57,104 +57,126 @@ namespace HyperContent
         }
         
         /// <summary>
-        /// Fetch remote catalog and cache it locally
+        /// Fetch remote catalog and cache it locally.
+        /// Uses catalogHash to decide whether catalog needs update: if remote catalogHash equals cached catalogHash, use cache and skip download.
         /// </summary>
         private bool FetchRemoteCatalog()
         {
             try
             {
-                // Check if cached catalog is still valid
                 string cachedPath = GetCachedCatalogPath();
-                if (File.Exists(cachedPath))
-                {
-                    var fileInfo = new FileInfo(cachedPath);
-                    long now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
-                    long fileTime = ((DateTimeOffset)fileInfo.LastWriteTime.ToUniversalTime()).ToUnixTimeSeconds();
-                    long age = now - fileTime;
-                    
-                    if (age < CATALOG_CACHE_MAX_AGE_SECONDS)
-                    {
-                        // Use cached catalog
-                        Debug.Log($"[HyperContent] Using cached remote catalog (age: {age}s)");
-                        _remoteCatalog = new LocalContentCatalog();
-                        if (_remoteCatalog.Initialize(cachedPath))
-                        {
-                            _isInitialized = true;
-                            return true;
-                        }
-                    }
-                }
-                
+
                 // Fetch from remote (synchronous for now, can be made async)
                 Debug.Log($"[HyperContent] Fetching remote catalog from: {_remoteCatalogUrl}");
-                
-                using (UnityEngine.Networking.UnityWebRequest request = UnityEngine.Networking.UnityWebRequest.Get(_remoteCatalogUrl))
+
+                using (var request = UnityEngine.Networking.UnityWebRequest.Get(_remoteCatalogUrl))
                 {
                     request.timeout = 30;
                     var asyncOp = request.SendWebRequest();
-                    
-                    // Wait for completion (blocking)
-                    while (!asyncOp.isDone)
-                    {
-                        // In real implementation, this should be async
-                    }
-                    
+                    while (!asyncOp.isDone) { }
+
                     if (request.result == UnityEngine.Networking.UnityWebRequest.Result.Success)
                     {
                         string catalogJson = request.downloadHandler.text;
-                        
-                        // Parse and validate catalog
-                        var tempCatalog = new LocalContentCatalog();
-                        string tempPath = Path.Combine(Application.temporaryCachePath, "temp_catalog.json");
-                        File.WriteAllText(tempPath, catalogJson);
-                        
-                        if (tempCatalog.Initialize(tempPath))
+                        byte[] remoteCatalogHash = LocalContentCatalogV2.GetCatalogHashFromJson(catalogJson);
+
+                        // v2 catalog: use catalogHash to decide if catalog needs update
+                        if (remoteCatalogHash != null)
                         {
-                            // Save to cache
+                            byte[] cachedCatalogHash = null;
+                            if (File.Exists(cachedPath))
+                            {
+                                try
+                                {
+                                    string cachedJson = File.ReadAllText(cachedPath);
+                                    cachedCatalogHash = LocalContentCatalogV2.GetCatalogHashFromJson(cachedJson);
+                                }
+                                catch { }
+                            }
+
+                            if (LocalContentCatalogV2.CatalogHashEquals(cachedCatalogHash, remoteCatalogHash) && File.Exists(cachedPath))
+                            {
+                                Debug.Log($"[HyperContent] Remote catalog unchanged (catalogHash match), using cache");
+                                var v2 = new LocalContentCatalogV2();
+                                v2.SetBaseUrl(GetBaseUrlFromCatalogUrl(_remoteCatalogUrl));
+                                if (v2.Initialize(cachedPath))
+                                {
+                                    _remoteCatalog = v2;
+                                    _isInitialized = true;
+                                    return true;
+                                }
+                            }
+
                             SaveCatalogToCache(catalogJson);
-                            
-                            // Use remote catalog
-                            _remoteCatalog = tempCatalog;
-                            _isInitialized = true;
-                            
-                            // Clean up temp file
-                            try { File.Delete(tempPath); } catch { }
-                            
-                            Debug.Log($"[HyperContent] Remote catalog fetched and cached successfully");
-                            return true;
+                            var v2New = new LocalContentCatalogV2();
+                            v2New.SetBaseUrl(GetBaseUrlFromCatalogUrl(_remoteCatalogUrl));
+                            if (v2New.Initialize(cachedPath))
+                            {
+                                _remoteCatalog = v2New;
+                                _isInitialized = true;
+                                Debug.Log($"[HyperContent] Remote catalog updated and cached (catalogHash changed or new)");
+                                return true;
+                            }
                         }
                         else
                         {
-                            Debug.LogError($"[HyperContent] Remote catalog validation failed");
-                            // Fallback to local catalog
-                            _isInitialized = _localCatalog?.IsValid ?? false;
-                            return _isInitialized;
+                            // v1 catalog: TTL-based behavior
+                            if (File.Exists(cachedPath))
+                            {
+                                var fileInfo = new FileInfo(cachedPath);
+                                long now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+                                long fileTime = ((DateTimeOffset)fileInfo.LastWriteTime.ToUniversalTime()).ToUnixTimeSeconds();
+                                if (now - fileTime < CATALOG_CACHE_MAX_AGE_SECONDS)
+                                {
+                                    _remoteCatalog = new LocalContentCatalog();
+                                    if (_remoteCatalog.Initialize(cachedPath))
+                                    {
+                                        _isInitialized = true;
+                                        return true;
+                                    }
+                                }
+                            }
+                            var tempCatalog = new LocalContentCatalog();
+                            string tempPath = Path.Combine(Application.temporaryCachePath, "temp_catalog.json");
+                            File.WriteAllText(tempPath, catalogJson);
+                            if (tempCatalog.Initialize(tempPath))
+                            {
+                                SaveCatalogToCache(catalogJson);
+                                _remoteCatalog = tempCatalog;
+                                _isInitialized = true;
+                                try { File.Delete(tempPath); } catch { }
+                                return true;
+                            }
                         }
                     }
                     else
                     {
                         Debug.LogWarning($"[HyperContent] Failed to fetch remote catalog: {request.error}, using cached/local catalog");
-                        // Try to use cached catalog even if expired
                         if (File.Exists(cachedPath))
                         {
-                            _remoteCatalog = new LocalContentCatalog();
-                            if (_remoteCatalog.Initialize(cachedPath))
+                            byte[] cachedHash = null;
+                            try
                             {
-                                _isInitialized = true;
-                                return true;
+                                cachedHash = LocalContentCatalogV2.GetCatalogHashFromJson(File.ReadAllText(cachedPath));
                             }
+                            catch { }
+                            if (cachedHash != null)
+                            {
+                                _remoteCatalog = new LocalContentCatalogV2();
+                                if (_remoteCatalog.Initialize(cachedPath)) { _isInitialized = true; return true; }
+                            }
+                            _remoteCatalog = new LocalContentCatalog();
+                            if (_remoteCatalog.Initialize(cachedPath)) { _isInitialized = true; return true; }
                         }
-                        
-                        // Fallback to local catalog
-                        _isInitialized = _localCatalog?.IsValid ?? false;
-                        return _isInitialized;
                     }
                 }
+
+                _isInitialized = _localCatalog?.IsValid ?? false;
+                return _isInitialized;
             }
             catch (Exception e)
             {
                 Debug.LogError($"[HyperContent] Error fetching remote catalog: {e.Message}");
-                // Fallback to local catalog
                 _isInitialized = _localCatalog?.IsValid ?? false;
                 return _isInitialized;
             }
@@ -217,6 +239,17 @@ namespace HyperContent
             return Path.Combine(Application.persistentDataPath, "catalog.catalog.json");
         }
         
+        /// <summary>
+        /// Derive bundle base URL from catalog URL (directory part) for v2 catalog RemoteUrl.
+        /// </summary>
+        private static string GetBaseUrlFromCatalogUrl(string catalogUrl)
+        {
+            if (string.IsNullOrEmpty(catalogUrl)) return null;
+            int lastSlash = catalogUrl.LastIndexOf('/');
+            if (lastSlash <= 0) return catalogUrl;
+            return catalogUrl.Substring(0, lastSlash);
+        }
+
         /// <summary>
         /// Simple hash function for URL
         /// </summary>

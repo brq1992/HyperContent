@@ -64,6 +64,12 @@ namespace HyperContent.Editor.Build
         /// Build report data
         /// </summary>
         public BuildReport Report { get; set; } = new BuildReport();
+        
+        /// <summary>
+        /// Mapping from expected bundle name to actual bundle file name (as built by Unity)
+        /// Unity might modify bundle names, so we need this mapping
+        /// </summary>
+        public Dictionary<string, string> ExpectedToActualBundleName { get; set; } = new Dictionary<string, string>();
     }
     
     /// <summary>
@@ -126,6 +132,15 @@ namespace HyperContent.Editor.Build
         
         [Tooltip("Generate build report")]
         public bool generateReport = true;
+        
+        [Tooltip("Bundle grouping strategy")]
+        public BundleGroupingStrategyType groupingStrategy = BundleGroupingStrategyType.MarkerBased;
+        
+        [Tooltip("Grouping tool ID (e.g., 'default')")]
+        public string groupingToolId = "default";
+        
+        [Tooltip("Build executor ID (e.g., 'default')")]
+        public string buildExecutorId = "default";
     }
     
     /// <summary>
@@ -136,5 +151,21 @@ namespace HyperContent.Editor.Build
         None,
         Lz4,
         Lz4HC
+    }
+    
+    /// <summary>
+    /// Bundle grouping strategy type
+    /// </summary>
+    public enum BundleGroupingStrategyType
+    {
+        /// <summary>
+        /// Use HyperContentAsset markers (bundleGroup field) for grouping
+        /// </summary>
+        MarkerBased,
+        
+        /// <summary>
+        /// Use Addressable groups for grouping
+        /// </summary>
+        Addressable
     }
 }

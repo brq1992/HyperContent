@@ -1,55 +1,8 @@
-# HyperContent v1 规范文档
+# HyperContent 规范文档
 
-## 1. Catalog Schema
+本文档描述通用规范（命名、错误码、RefCount、目录结构等）。**Catalog Schema** 见 [RESOURCE_LOADING_SYSTEM_SPEC.md](RESOURCE_LOADING_SYSTEM_SPEC.md) 与 `Runtime/Catalog/CatalogSchemaV2.cs`（schemaVersion=2，GUID/Name、stringTable、nameAliases）。
 
-### 文件格式
-- 文件扩展名: `.catalog.json`
-- 编码: UTF-8
-- 格式: JSON
-
-### Schema 结构
-```json
-{
-  "version": 1,
-  "name": "catalog_name",
-  "timestamp": 1234567890,
-  "assetToBundle": {
-    "asset_key_1": "bundle_name_1",
-    "asset_key_2": "bundle_name_2"
-  },
-  "bundles": {
-    "bundle_name_1": {
-      "name": "bundle_name_1",
-      "size": 1024000,
-      "hash": "sha256_hash_string",
-      "version": 1,
-      "location": "Local|Remote|StreamingAssets|Resources",
-      "remoteUrl": "https://example.com/bundles/bundle_name_1.bundle",
-      "localPath": "path/to/bundle_name_1.bundle",
-      "dependencies": ["bundle_name_2"],
-      "assetKeys": ["asset_key_1"]
-    }
-  }
-}
-```
-
-### 字段说明
-- `version`: Catalog格式版本号，当前为1
-- `name`: Catalog名称/标识符
-- `timestamp`: 创建时间戳（Unix时间戳）
-- `assetToBundle`: 资产键到Bundle名称的映射
-- `bundles`: Bundle信息字典
-  - `name`: Bundle名称（必须与字典key一致）
-  - `size`: Bundle大小（字节）
-  - `hash`: SHA256哈希值（用于完整性验证）
-  - `version`: Bundle版本号
-  - `location`: 位置类型（Local/Remote/StreamingAssets/Resources）
-  - `remoteUrl`: 远程URL（location为Remote时使用）
-  - `localPath`: 本地路径（location为Local或StreamingAssets时使用）
-  - `dependencies`: 依赖的Bundle名称列表
-  - `assetKeys`: 包含的资产键列表
-
-## 2. 目录结构
+## 1. 目录结构
 
 ### Runtime程序集
 ```
@@ -60,21 +13,20 @@ Assets/HyperContent/
 │   │   ├── IBundleStore.cs
 │   │   ├── IBundleTransport.cs
 │   │   ├── IBundleLoader.cs
-│   │   └── IResourceProvider.cs
+│   │   ├── IResourceProvider.cs
+│   │   └── IAssetLoader.cs
 │   ├── Data/            # 数据结构
 │   │   ├── BundleInfo.cs
 │   │   ├── Handle.cs
+│   │   ├── AssetHandle.cs
 │   │   └── FetchResult.cs
-│   ├── Catalog/         # Catalog实现
-│   │   ├── CatalogSchema.cs
-│   │   └── LocalContentCatalog.cs
-│   ├── Bundle/          # Bundle相关
-│   │   ├── LocalBundleStore.cs
-│   │   └── UnityBundleLoader.cs
-│   ├── Resource/        # 资源提供
-│   │   └── ResourceProvider.cs
+│   ├── Catalog/         # Catalog 实现
+│   │   ├── CatalogSchemaV2.cs
+│   │   └── LocalContentCatalogV2.cs
+│   ├── Bundle/          # Bundle 相关
+│   ├── Resource/        # 资源提供、IAssetLoader 实现
 │   └── HyperContentManager.cs
-├── Editor/              # 编辑器工具（v1暂不实现）
+├── Editor/              # 编辑器与构建
 └── Shared/              # 共享定义
     ├── Constants.cs
     └── ContentLocation.cs
@@ -82,7 +34,7 @@ Assets/HyperContent/
 
 ### 程序集划分
 - `HyperContent.Runtime`: 运行期核心代码
-- `HyperContent.Editor`: 编辑器工具（v1暂不实现）
+- `HyperContent.Editor`: 编辑器与构建工具
 - `HyperContent.Shared`: 共享的数据结构和常量
 
 ### 依赖方向
@@ -90,7 +42,7 @@ Assets/HyperContent/
 Editor → Runtime → Shared
 ```
 
-## 3. 命名规则
+## 2. 命名规则
 
 ### 文件命名
 - Catalog文件: `{catalog_name}.catalog.json`
@@ -108,7 +60,7 @@ Editor → Runtime → Shared
 - 枚举: PascalCase (如 `ContentLocation`)
 - 常量: UPPER_SNAKE_CASE (如 `ERROR_CODE`)
 
-## 4. 错误码
+## 3. 错误码
 
 ### Catalog错误 (1000-1999)
 - `1001`: Catalog未找到
@@ -156,7 +108,7 @@ Editor → Runtime → Shared
 - `status`: 状态
 - `location`: 位置
 
-## 6. RefCount规则
+## 5. RefCount规则
 
 ### 引用计数管理
 1. **加载资产时**: RefCount自动+1
@@ -172,13 +124,12 @@ Editor → Runtime → Shared
 - Handle对象也有RefCount，用于管理异步操作的生命周期
 - Bundle的卸载策略：当Bundle内所有资产的RefCount都归零时，才卸载Bundle
 
-## 7. 最小可用链路POC
+## 6. 最小可用链路
 
 ### 使用流程
-1. 创建Catalog JSON文件（放在StreamingAssets）
-2. 创建测试Bundle（Unity AssetBundle）
-3. 初始化HyperContentManager
-4. 调用LoadAsset加载资源
+1. 按 [Editor/QUICK_START.md](Editor/QUICK_START.md) 构建，得到 Catalog（.v2.catalog.json）与 Bundle
+2. 将产物放入 StreamingAssets 或按 Catalog 配置
+3. 初始化 HyperContentManager，使用 IAssetLoader.Load&lt;T&gt;(key) 或 IResourceProvider 加载资源
 
 ### 示例代码
 ```csharp
@@ -189,12 +140,6 @@ HyperContentManager.Instance.Initialize("test.catalog.json");
 var sprite = HyperContentManager.ResourceProvider.LoadAsset<Sprite>("test_sprite");
 ```
 
-## 8. 接口变更控制
+## 7. 接口变更控制
 
-**重要**: 任何对以下内容的修改必须经过Owner0 Code Review:
-- Catalog Schema结构
-- 核心接口定义（IContentCatalog, IBundleStore, IBundleTransport, IBundleLoader, IResourceProvider）
-- 运行期数据结构（ContentLocation, BundleInfo, Handle, FetchResult）
-- 错误码定义
-- 日志字段定义
-- RefCount规则
+上述 Schema、接口、数据结构、错误码、日志、RefCount 的变更须经 **Owner0 Code Review**。职责与流程见 [OWNERS.md](OWNERS.md) 与 `.cursor/rules/owner0.md`。
