@@ -1,4 +1,4 @@
-namespace HyperContent
+namespace com.igg.hypercontent.runtime
 {
     /// <summary>
     /// Result of a fetch operation
@@ -29,6 +29,11 @@ namespace HyperContent
         /// Duration of the fetch operation in milliseconds
         /// </summary>
         public long DurationMs { get; set; }
+
+        /// <summary>
+        /// Downloaded data (only set for async download operations)
+        /// </summary>
+        public byte[] Data { get; set; }
         
         /// <summary>
         /// Create a successful result

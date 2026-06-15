@@ -4,7 +4,9 @@
     "references": [
         "HyperContent.Runtime",
         "HyperContent.Shared",
-        "Unity.Addressables.Editor"
+        "Unity.Addressables.Editor",
+        "Unity.ScriptableBuildPipeline",
+        "Unity.ScriptableBuildPipeline.Editor"
     ],
     "includePlatforms": [
         "Editor"

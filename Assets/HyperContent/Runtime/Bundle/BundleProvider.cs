@@ -1,20 +1,23 @@
 using System;
-using System.Collections;
 using UnityEngine;
-using HyperContent.Shared;
+using com.igg.hypercontent.shared;
 
-namespace HyperContent
+namespace com.igg.hypercontent.runtime
 {
     /// <summary>
-    /// Bundle provider that combines store, transport, and loader
-    /// Provides stable bundle access interface regardless of bundle location
+    /// [LEGACY] Pre-refactor bundle provider facade.
+    /// Superseded by the Provider Layer: BundleFileProvider, RemoteBundleProvider, etc.
+    /// in Runtime/Providers/. The new architecture routes through IContentProvider.Provide()
+    /// rather than this monolithic facade.
+    ///
+    /// TODO [Owner3]: Remove once confirmed no external callers remain.
     /// </summary>
     public class BundleProvider
     {
         private IBundleStore _store;
         private IBundleTransport _transport;
         private IBundleLoader _loader;
-        private IContentCatalog _catalog;
+        private ICatalog _catalog;
         
         /// <summary>
         /// Bundle fetch result with data
@@ -29,7 +32,7 @@ namespace HyperContent
             public string ErrorMessage { get; set; }
         }
         
-        public BundleProvider(IBundleStore store, IBundleTransport transport, IBundleLoader loader, IContentCatalog catalog)
+        public BundleProvider(IBundleStore store, IBundleTransport transport, IBundleLoader loader, ICatalog catalog)
         {
             _store = store;
             _transport = transport;
@@ -50,8 +53,8 @@ namespace HyperContent
                 result.ErrorMessage = $"Bundle not found in catalog: {bundleName}";
                 return result;
             }
-            
-            // Handle based on location
+
+            // Local/Remote routing: StreamingAssets → local file (no download); Remote → download/cache then load
             switch (bundleInfo.Location)
             {
                 case ContentLocation.Local:
@@ -88,8 +91,8 @@ namespace HyperContent
                 onComplete?.Invoke(result);
                 return;
             }
-            
-            // Handle based on location
+
+            // Local/Remote routing: StreamingAssets → local file; Remote → download/cache then load
             switch (bundleInfo.Location)
             {
                 case ContentLocation.Local:
@@ -185,15 +188,8 @@ namespace HyperContent
         /// </summary>
         private void GetLocalBundleAsync(string bundleName, BundleInfo bundleInfo, Action<BundleFetchResult> onComplete)
         {
-            // For local bundles, async is just loading on background thread
-            HyperContentManager.Instance.StartCoroutine(LoadLocalBundleCoroutine(bundleName, bundleInfo, onComplete));
-        }
-        
-        private IEnumerator LoadLocalBundleCoroutine(string bundleName, BundleInfo bundleInfo, Action<BundleFetchResult> onComplete)
-        {
-            // Load on background thread (simplified - in real implementation use proper threading)
+            // Local path is synchronous; avoid requiring HyperContentManager / coroutine runner (legacy API).
             var result = GetLocalBundle(bundleName, bundleInfo);
-            yield return null; // Yield to allow other operations
             onComplete?.Invoke(result);
         }
         
@@ -229,14 +225,14 @@ namespace HyperContent
             }
             
             // Download from remote
-            if (string.IsNullOrEmpty(bundleInfo.RemoteUrl))
+            if (string.IsNullOrEmpty(bundleInfo.RemoteRelativePath))
             {
                 result.ErrorCode = ErrorCode.BUNDLE_NOT_FOUND;
-                result.ErrorMessage = $"Remote URL not specified for bundle: {bundleName}";
+                result.ErrorMessage = $"Remote relative path not specified for bundle: {bundleName}";
                 return result;
             }
-            
-            var fetchResult = _transport.Download(bundleInfo.RemoteUrl, out byte[] data);
+
+            var fetchResult = _transport.Download(bundleInfo.RemoteRelativePath, out byte[] data);
             if (!fetchResult.Success || data == null)
             {
                 result.ErrorCode = fetchResult.ErrorCode;
@@ -301,19 +297,19 @@ namespace HyperContent
             }
             
             // Download from remote
-            if (string.IsNullOrEmpty(bundleInfo.RemoteUrl))
+            if (string.IsNullOrEmpty(bundleInfo.RemoteRelativePath))
             {
                 var result = new BundleFetchResult
                 {
                     ErrorCode = ErrorCode.BUNDLE_NOT_FOUND,
-                    ErrorMessage = $"Remote URL not specified for bundle: {bundleName}"
+                    ErrorMessage = $"Remote relative path not specified for bundle: {bundleName}"
                 };
                 onComplete?.Invoke(result);
                 return;
             }
-            
+
             _transport.DownloadAsync(
-                bundleInfo.RemoteUrl,
+                bundleInfo.RemoteRelativePath,
                 onProgress,
                 (fetchResult) =>
                 {
@@ -330,7 +326,7 @@ namespace HyperContent
                     // Note: FetchResult doesn't include data in current interface
                     // We need to download synchronously as fallback or modify interface
                     // For now, download synchronously
-                    var syncResult = _transport.Download(bundleInfo.RemoteUrl, out byte[] data);
+                    var syncResult = _transport.Download(bundleInfo.RemoteRelativePath, out byte[] data);
                     if (!syncResult.Success || data == null)
                     {
                         result.ErrorCode = syncResult.ErrorCode;

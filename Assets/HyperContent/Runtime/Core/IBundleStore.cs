@@ -1,6 +1,7 @@
-using HyperContent.Shared;
+using System;
+using com.igg.hypercontent.shared;
 
-namespace HyperContent
+namespace com.igg.hypercontent.runtime
 {
     /// <summary>
     /// Interface for bundle storage management
@@ -8,6 +9,14 @@ namespace HyperContent
     /// </summary>
     public interface IBundleStore
     {
+        /// <summary>
+        /// Raised immediately after a bundle is successfully saved to (or deleted from) the store.
+        /// Subscribers (e.g. BundleFileProvider's path cache) can react to cache changes
+        /// caused by hot-update writes without polling File.Exists on every load.
+        /// Payload is the affected bundleName.
+        /// </summary>
+        event Action<string> BundleChanged;
+
         /// <summary>
         /// Initialize the bundle store
         /// </summary>

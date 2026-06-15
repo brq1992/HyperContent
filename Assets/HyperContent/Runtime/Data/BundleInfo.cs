@@ -1,6 +1,6 @@
-using HyperContent.Shared;
+using com.igg.hypercontent.shared;
 
-namespace HyperContent
+namespace com.igg.hypercontent.runtime
 {
     /// <summary>
     /// Information about a content bundle
@@ -31,11 +31,20 @@ namespace HyperContent
         /// Bundle location
         /// </summary>
         public ContentLocation Location { get; set; }
-        
+
         /// <summary>
-        /// Remote URL if location is Remote
+        /// Catalog tags (e.g. Blocking), originating from build-time grouping data serialized into <see cref="CatalogSchema.BundleRecordEntry.bundleTagFlags"/>.
+        /// Flag definition: <see cref="BundleTagFlags"/>.
         /// </summary>
-        public string RemoteUrl { get; set; }
+        public BundleTagFlags TagFlags { get; internal set; }
+
+        /// <summary>
+        /// If <see cref="Location"/> is <see cref="ContentLocation.Remote"/>, path **after** the per-platform CDN folder,
+        /// **without** <see cref="NamingRules.BUNDLE_FILE_EXTENSION"/> (catalog contract). Example: <c>my_patch_1.0</c> maps
+        /// to the CDN object <c>Android/my_patch_1.0.bundle</c> when combined with base URL and platform segment.
+        /// <see cref="HttpBundleTransport"/> appends the file extension when resolving URLs. Empty or null if not remote.
+        /// </summary>
+        public string RemoteRelativePath { get; set; }
         
         /// <summary>
         /// Local file path if location is Local or StreamingAssets

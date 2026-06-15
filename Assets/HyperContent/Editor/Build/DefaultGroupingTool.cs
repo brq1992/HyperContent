@@ -1,7 +1,7 @@
+using System;
 using System.Collections.Generic;
-using System.Linq;
 
-namespace HyperContent.Editor.Build
+namespace com.igg.hypercontent.editor
 {
     /// <summary>
     /// Default grouping tool that uses the existing asset collection and grouping strategy system
@@ -122,75 +122,45 @@ namespace HyperContent.Editor.Build
             plan.AssetToBundle = tempContext.AssetToBundle;
             plan.BundleToAssets = tempContext.BundleToAssets;
             
-            // Handle dependencies if enabled
-            if (config.includeDependencies)
-            {
-                AddDependenciesToBundles(plan);
-            }
+            // Strategies already merge dependencies when includeDependencies is set; only ensure paths for manifest/catalog.
+            EnsureGuidToPathForPlanAssets(plan);
+
+            plan.BundleCompression = new Dictionary<string, BundleCompressionType>(
+                tempContext.BundleCompression,
+                StringComparer.OrdinalIgnoreCase);
         }
-        
+
         /// <summary>
-        /// Add dependencies to bundles if includeDependencies is enabled
+        /// Fill <see cref="BuildPlan.GuidToPath"/> for every GUID in <see cref="BuildPlan.AssetToBundle"/> (dependency GUIDs merged by strategies are not added there).
         /// </summary>
-        private void AddDependenciesToBundles(BuildPlan plan)
+        private static void EnsureGuidToPathForPlanAssets(BuildPlan plan)
         {
-            foreach (var kvp in plan.Dependencies)
+            if (plan?.AssetToBundle == null || plan.GuidToPath == null)
+                return;
+
+            foreach (var guid in plan.AssetToBundle.Keys)
             {
-                var assetGuid = kvp.Key;
-                var dependencies = kvp.Value;
-                
-                if (!plan.AssetToBundle.TryGetValue(assetGuid, out var bundleName))
-                {
+                if (plan.GuidToPath.ContainsKey(guid))
                     continue;
-                }
-                
-                foreach (var depGuid in dependencies)
-                {
-                    if (!plan.AssetToBundle.ContainsKey(depGuid))
-                    {
-                        if (!plan.BundleToAssets.ContainsKey(bundleName))
-                        {
-                            plan.BundleToAssets[bundleName] = new HashSet<string>();
-                        }
-                        plan.BundleToAssets[bundleName].Add(depGuid);
-                        plan.AssetToBundle[depGuid] = bundleName;
-                    }
-                }
+                var path = UnityEditor.AssetDatabase.GUIDToAssetPath(guid);
+                if (!string.IsNullOrEmpty(path))
+                    plan.GuidToPath[guid] = path;
             }
         }
         
         /// <summary>
-        /// Build bundle dependencies from asset dependencies
+        /// Build bundle dependencies from all assigned assets (transitive Unity deps).
+        /// Delegates to <see cref="DependencyAnalyzer.BuildBundleDependencies"/> so shader/material chains are included.
         /// </summary>
         private void BuildBundleDependencies(BuildPlan plan)
         {
-            plan.BundleDependencies.Clear();
-            
-            foreach (var kvp in plan.Dependencies)
+            var tempContext = new BuildContext
             {
-                var assetGuid = kvp.Key;
-                var dependencies = kvp.Value;
-                
-                if (!plan.AssetToBundle.TryGetValue(assetGuid, out var bundleName))
-                {
-                    continue;
-                }
-                
-                foreach (var depGuid in dependencies)
-                {
-                    if (plan.AssetToBundle.TryGetValue(depGuid, out var depBundleName))
-                    {
-                        if (depBundleName != bundleName)
-                        {
-                            if (!plan.BundleDependencies.ContainsKey(bundleName))
-                            {
-                                plan.BundleDependencies[bundleName] = new HashSet<string>();
-                            }
-                            plan.BundleDependencies[bundleName].Add(depBundleName);
-                        }
-                    }
-                }
-            }
+                AssetToBundle = plan.AssetToBundle,
+                GuidToPath = plan.GuidToPath,
+                BundleDependencies = plan.BundleDependencies
+            };
+            DependencyAnalyzer.BuildBundleDependencies(tempContext);
         }
     }
 }

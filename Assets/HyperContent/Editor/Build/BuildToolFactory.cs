@@ -1,7 +1,7 @@
 using System.Collections.Generic;
 using System.Linq;
 
-namespace HyperContent.Editor.Build
+namespace com.igg.hypercontent.editor
 {
     /// <summary>
     /// Factory for creating grouping tools and build executors
@@ -29,6 +29,10 @@ namespace HyperContent.Editor.Build
             // Register default build executor
             var defaultExecutor = new DefaultBuildExecutor();
             RegisterBuildExecutor("default", defaultExecutor);
+            
+            // Register update build executor
+            var updateExecutor = new UpdateBuildExecutor();
+            RegisterBuildExecutor("update", updateExecutor);
         }
         
         /// <summary>

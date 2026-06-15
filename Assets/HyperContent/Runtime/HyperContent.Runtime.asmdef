@@ -1,8 +1,11 @@
-{
+﻿{
     "name": "HyperContent.Runtime",
     "rootNamespace": "HyperContent",
     "references": [
-        "HyperContent.Shared"
+        "HyperContent.Shared",
+        "Google.Play.AssetDelivery",
+        "Assembly_Shared",
+        "Unity.Addressables"
     ],
     "includePlatforms": [],
     "excludePlatforms": [],

@@ -1,6 +1,6 @@
 using System.Collections.Generic;
 
-namespace HyperContent.Editor.Build
+namespace com.igg.hypercontent.editor
 {
     /// <summary>
     /// Strategy interface for grouping assets into bundles

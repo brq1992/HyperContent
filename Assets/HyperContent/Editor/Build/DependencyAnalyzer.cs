@@ -4,7 +4,7 @@ using System.Linq;
 using UnityEditor;
 using UnityEngine;
 
-namespace HyperContent.Editor.Build
+namespace com.igg.hypercontent.editor
 {
     /// <summary>
     /// Analyzes asset dependencies and determines bundle assignments
@@ -32,39 +32,45 @@ namespace HyperContent.Editor.Build
         }
         
         /// <summary>
-        /// Build bundle dependencies from asset dependencies
-        /// This should be called after AssignBundles() to ensure AssetToBundle is populated
+        /// Pre-build estimate of bundle dependencies using <c>AssetDatabase.GetDependencies(path, true)</c>.
+        /// Produces a reasonable approximation for validation and editor catalog generation.
+        /// <para/>
+        /// For actual builds, <see cref="DefaultBuildExecutor.RebuildBundleDependenciesFromSbpResults"/>
+        /// overwrites <see cref="BuildContext.BundleDependencies"/> with SBP's object-level dependency
+        /// data which is the ground truth (same approach as Addressables).
         /// </summary>
         public static void BuildBundleDependencies(BuildContext context)
         {
             context.BundleDependencies.Clear();
-            
-            foreach (var kvp in context.Dependencies)
+            if (context.AssetToBundle == null || context.GuidToPath == null)
+                return;
+
+            foreach (var kvp in context.AssetToBundle)
             {
                 var assetGuid = kvp.Key;
-                var dependencies = kvp.Value;
-                
-                // Get bundle for this asset
-                if (!context.AssetToBundle.TryGetValue(assetGuid, out var bundleName))
-                {
+                var bundleName = kvp.Value;
+                if (!context.GuidToPath.TryGetValue(assetGuid, out var assetPath) || string.IsNullOrEmpty(assetPath))
                     continue;
-                }
-                
-                // Find dependencies that are in different bundles
-                foreach (var depGuid in dependencies)
+
+                var depPaths = AssetDatabase.GetDependencies(assetPath, true);
+                foreach (var depPath in depPaths)
                 {
-                    if (context.AssetToBundle.TryGetValue(depGuid, out var depBundleName))
-                    {
-                        if (depBundleName != bundleName)
-                        {
-                            // Add bundle dependency
-                            if (!context.BundleDependencies.ContainsKey(bundleName))
-                            {
-                                context.BundleDependencies[bundleName] = new HashSet<string>();
-                            }
-                            context.BundleDependencies[bundleName].Add(depBundleName);
-                        }
-                    }
+                    if (depPath == assetPath)
+                        continue;
+                    if (depPath.EndsWith(".cs") || depPath.EndsWith(".js"))
+                        continue;
+
+                    var depGuid = AssetDatabase.AssetPathToGUID(depPath);
+                    if (string.IsNullOrEmpty(depGuid))
+                        continue;
+                    if (!context.AssetToBundle.TryGetValue(depGuid, out var depBundleName))
+                        continue;
+                    if (depBundleName == bundleName)
+                        continue;
+
+                    if (!context.BundleDependencies.ContainsKey(bundleName))
+                        context.BundleDependencies[bundleName] = new HashSet<string>();
+                    context.BundleDependencies[bundleName].Add(depBundleName);
                 }
             }
         }

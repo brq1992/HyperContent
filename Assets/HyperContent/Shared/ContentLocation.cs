@@ -1,4 +1,4 @@
-namespace HyperContent.Shared
+namespace com.igg.hypercontent.shared
 {
     /// <summary>
     /// Represents the location where content can be found

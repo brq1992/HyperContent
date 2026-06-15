@@ -3,7 +3,7 @@ using System.IO;
 using UnityEditor;
 using UnityEngine;
 
-namespace HyperContent.Editor.Build
+namespace com.igg.hypercontent.editor
 {
     /// <summary>
     /// Main builder class that orchestrates the entire build process
@@ -12,13 +12,18 @@ namespace HyperContent.Editor.Build
     public static class HyperContentBuilder
     {
         /// <summary>
-        /// Build HyperContent bundles and catalog using grouping tool and build executor
+        /// Build HyperContent bundles and catalog using grouping tool and build executor.
         /// </summary>
-        public static BuildResult Build(BuildConfig config)
+        /// <param name="config">Build configuration.</param>
+        /// <param name="executorIdOverride">If set, use this executor instead of <see cref="BuildConfig.buildExecutorId"/> (e.g. Update Build).</param>
+        public static BuildResult Build(BuildConfig config, string executorIdOverride = null)
         {
             try
             {
                 Debug.Log("[HyperContent] Starting build process...");
+                config.BeginNewBuildVersionSession();
+                var useExecutorOverride = !string.IsNullOrEmpty(executorIdOverride);
+                var effectiveExecutorId = useExecutorOverride ? executorIdOverride : config.buildExecutorId;
                 
                 // Step 1: Get grouping tool
                 var groupingTool = BuildToolFactory.GetGroupingTool(config.groupingToolId);
@@ -54,9 +59,19 @@ namespace HyperContent.Editor.Build
                 }
                 
                 Debug.Log($"[HyperContent] Build plan generated: {plan.BundleToAssets.Count} bundles, {plan.AssetMarkers.Count} assets");
-                
+
+                // Export BuildPlan for comparison (full vs update): same format, diff to see if manifest or diff logic is wrong
+                var planCompareDir = BuildPlanExporter.GetPlanCompareDirectory(config);
+                if (!string.IsNullOrEmpty(planCompareDir))
+                {
+                    var planFileName = useExecutorOverride ? "update_build_plan.txt" : "full_build_plan.txt";
+                    var written = BuildPlanExporter.ExportBuildPlan(plan, planCompareDir, planFileName);
+                    if (!string.IsNullOrEmpty(written))
+                        Debug.Log($"[HyperContent] BuildPlan exported: {written}");
+                }
+
                 // Step 4: Get build executor
-                var executor = BuildToolFactory.GetBuildExecutor(config.buildExecutorId);
+                var executor = BuildToolFactory.GetBuildExecutor(effectiveExecutorId);
                 Debug.Log($"[HyperContent] Using build executor: {executor.ExecutorName}");
                 
                 // Step 5: Validate executor

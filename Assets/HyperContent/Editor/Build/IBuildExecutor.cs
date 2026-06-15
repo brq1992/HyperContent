@@ -1,6 +1,6 @@
 using System.Collections.Generic;
 
-namespace HyperContent.Editor.Build
+namespace com.igg.hypercontent.editor
 {
     /// <summary>
     /// Interface for build executors that convert BuildPlan into bundles and catalog

@@ -1,7 +1,7 @@
 using System;
 using UnityEngine;
 
-namespace HyperContent.Editor.Build
+namespace com.igg.hypercontent.editor
 {
     /// <summary>
     /// Factory for creating bundle grouping strategies

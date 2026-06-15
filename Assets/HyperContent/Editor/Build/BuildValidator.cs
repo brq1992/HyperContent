@@ -2,11 +2,12 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
-using HyperContent.Shared;
+using com.igg.hypercontent.runtime;
+using com.igg.hypercontent.shared;
 using UnityEditor;
 using UnityEngine;
 
-namespace HyperContent.Editor.Build
+namespace com.igg.hypercontent.editor
 {
     /// <summary>
     /// Validates build results and checks for errors.
@@ -34,9 +35,10 @@ namespace HyperContent.Editor.Build
             // Check for missing resources (only check bundle files if requested)
             ValidateMissingResources(context, checkBundleFiles);
             
-            // Generate bundle size report (only if bundle files should be checked)
+            // Round-trip validation and bundle size report (only after catalog has been generated)
             if (checkBundleFiles)
             {
+                ValidateCatalogRoundTrip(context);
                 GenerateBundleSizeReport(context);
             }
             
@@ -47,6 +49,44 @@ namespace HyperContent.Editor.Build
             }
             
             return isValid;
+        }
+
+        /// <summary>
+        /// After <c>settings.json</c> is written: fail if the file contains absolute URLs (<c>://</c>).
+        /// Matches <see cref="RuntimeSettings"/> policy — remote catalog/hash paths are relative; CDN base is set at runtime.
+        /// </summary>
+        public static bool ValidateExportedSettingsJson(BuildContext pContext)
+        {
+            if (pContext?.Config == null)
+                return true;
+
+            string catalogDir = pContext.Config.CatalogOutputDirectory;
+            string settingsPath = Path.Combine(catalogDir, HyperContentPaths.SETTINGS_FILENAME);
+            if (!File.Exists(settingsPath))
+            {
+                pContext.Errors.Add(new BuildError($"settings.json not found for validation: {settingsPath}", settingsPath));
+                return false;
+            }
+
+            try
+            {
+                string json = File.ReadAllText(settingsPath);
+                if (json.IndexOf("://", StringComparison.Ordinal) >= 0)
+                {
+                    pContext.Errors.Add(new BuildError(
+                        "settings.json must not contain absolute URLs (substring '://'). " +
+                        "Use relative remote paths only; set CDN base at runtime via SetRemoteBundleBaseUrl.",
+                        settingsPath));
+                    return false;
+                }
+            }
+            catch (Exception e)
+            {
+                pContext.Errors.Add(new BuildError($"Failed to validate settings.json: {e.Message}", settingsPath));
+                return false;
+            }
+
+            return true;
         }
         
         /// <summary>
@@ -179,7 +219,7 @@ namespace HyperContent.Editor.Build
         /// </summary>
         private static void ValidateMissingResources(BuildContext context, bool checkBundleFiles = true)
         {
-            var outputDir = context.Config.outputDirectory;
+            var bundleDir = context.Config.BundleOutputDirectory;
             
             // Check that all bundle files exist (only if requested, i.e., after build)
             if (checkBundleFiles)
@@ -203,7 +243,7 @@ namespace HyperContent.Editor.Build
                         }
                     }
                     
-                    var bundlePath = Path.Combine(outputDir, bundleFileName);
+                    var bundlePath = Path.Combine(bundleDir, bundleFileName);
                     bundlePath = bundlePath.Replace("\\", "/"); // Normalize path separators
                     
                     if (!File.Exists(bundlePath))
@@ -211,9 +251,9 @@ namespace HyperContent.Editor.Build
                         // Try alternative paths
                         var alternativePaths = new[]
                         {
-                            Path.Combine(outputDir, bundleName).Replace("\\", "/"),
-                            Path.Combine(outputDir, bundleName + ".bundle").Replace("\\", "/"),
-                            Path.Combine(outputDir, bundleFileName).Replace("\\", "/")
+                            Path.Combine(bundleDir, bundleName).Replace("\\", "/"),
+                            Path.Combine(bundleDir, bundleName + ".bundle").Replace("\\", "/"),
+                            Path.Combine(bundleDir, bundleFileName).Replace("\\", "/")
                         };
                         
                         bool found = false;
@@ -232,9 +272,9 @@ namespace HyperContent.Editor.Build
                             var availableFiles = new List<string>();
                             try
                             {
-                                if (Directory.Exists(outputDir))
+                                if (Directory.Exists(bundleDir))
                                 {
-                                    var files = Directory.GetFiles(outputDir, "*", SearchOption.TopDirectoryOnly);
+                                    var files = Directory.GetFiles(bundleDir, "*", SearchOption.TopDirectoryOnly);
                                     foreach (var file in files)
                                     {
                                         var fileName = Path.GetFileName(file);
@@ -299,6 +339,155 @@ namespace HyperContent.Editor.Build
         }
         
         /// <summary>
+        /// Validate catalog round-trip: serialize → deserialize → re-serialize must produce identical output.
+        /// Delegates to CatalogGenerator.Serialize/Deserialize so format changes (JSON → binary) are transparent.
+        /// </summary>
+        private static void ValidateCatalogRoundTrip(BuildContext context)
+        {
+            var catalogDir = context.Config.CatalogOutputDirectory;
+            var catalogPath = Path.Combine(catalogDir, HyperContentPaths.LOCAL_CATALOG_FILENAME);
+
+            if (!File.Exists(catalogPath))
+            {
+                context.Warnings.Add(new BuildWarning(
+                    $"Round-trip validation skipped: catalog file not found at {catalogPath}",
+                    catalogPath
+                ));
+                return;
+            }
+
+            try
+            {
+                // round-trip 必须用与构建时一致的 format（来自 BuildConfig），否则字节比较毫无意义。
+                var format = context.Config.catalogFormat;
+                var originalBytes = File.ReadAllBytes(catalogPath);
+                var deserialized = CatalogGenerator.Deserialize(originalBytes, format);
+
+                if (deserialized == null)
+                {
+                    context.Errors.Add(new BuildError(
+                        "Round-trip validation failed: catalog deserialized to null",
+                        catalogPath,
+                        null
+                    ));
+                    return;
+                }
+
+                int errorsBeforeCatalogIntegrity = context.Errors.Count;
+
+                if (deserialized.schemaVersion != CatalogSchema.CurrentSchemaVersion)
+                {
+                    context.Errors.Add(new BuildError(
+                        $"Catalog schemaVersion={deserialized.schemaVersion}, expected {CatalogSchema.CurrentSchemaVersion}. Rebuild catalog.",
+                        catalogPath,
+                        null));
+                    return;
+                }
+
+                if (deserialized.bundleRecords != null)
+                {
+                    for (int i = 0; i < deserialized.bundleRecords.Count; i++)
+                    {
+                        var br = deserialized.bundleRecords[i];
+                        if (br.contentLocation != (int)ContentLocation.Remote)
+                            continue;
+
+                        bool invalidPath = br.remoteRelativePathIndex < 0
+                            || br.remoteRelativePathIndex >= deserialized.stringTable.Length
+                            || string.IsNullOrEmpty(deserialized.stringTable[br.remoteRelativePathIndex]);
+
+                        if (invalidPath)
+                        {
+                            string bundleName = (br.bundleNameIndex >= 0 && br.bundleNameIndex < deserialized.stringTable.Length)
+                                ? deserialized.stringTable[br.bundleNameIndex]
+                                : $"bundleRecords[{i}]";
+                            context.Errors.Add(new BuildError(
+                                $"Remote bundle '{bundleName}' must have a valid remoteRelativePathIndex into stringTable. " +
+                                $"Got index {br.remoteRelativePathIndex}.",
+                                catalogPath,
+                                bundleName));
+                        }
+                    }
+                }
+
+                if (context.Errors.Count > errorsBeforeCatalogIntegrity)
+                    return;
+
+                var reserializedBytes = CatalogGenerator.Serialize(deserialized, format);
+
+                if (!ByteArrayEquals(originalBytes, reserializedBytes))
+                {
+                    var diffPosition = FindFirstByteDifference(originalBytes, reserializedBytes);
+
+                    context.Errors.Add(new BuildError(
+                        $"Round-trip validation failed: re-serialized catalog differs from original. " +
+                        $"First difference at byte {diffPosition}. " +
+                        $"Original size={originalBytes.Length}, Re-serialized size={reserializedBytes.Length}. " +
+                        GetByteDiffSnippet(originalBytes, reserializedBytes, diffPosition),
+                        catalogPath,
+                        null
+                    ));
+                }
+                else
+                {
+                    Debug.Log($"[HyperContent] Round-trip validation passed ({originalBytes.Length} bytes)");
+                }
+            }
+            catch (Exception e)
+            {
+                context.Errors.Add(new BuildError(
+                    $"Round-trip validation exception: {e.Message}",
+                    catalogPath,
+                    null
+                ));
+            }
+        }
+
+        private static bool ByteArrayEquals(byte[] pA, byte[] pB)
+        {
+            if (pA.Length != pB.Length) return false;
+            for (int i = 0; i < pA.Length; i++)
+            {
+                if (pA[i] != pB[i]) return false;
+            }
+            return true;
+        }
+
+        private static int FindFirstByteDifference(byte[] pA, byte[] pB)
+        {
+            int minLen = Math.Min(pA.Length, pB.Length);
+            for (int i = 0; i < minLen; i++)
+            {
+                if (pA[i] != pB[i])
+                    return i;
+            }
+            return minLen;
+        }
+
+        /// <summary>
+        /// Try to produce a human-readable diff snippet. Falls back to hex if UTF-8 decoding fails.
+        /// </summary>
+        private static string GetByteDiffSnippet(byte[] pOriginal, byte[] pReserialized, int pDiffPos)
+        {
+            const int CONTEXT_BYTES = 40;
+            try
+            {
+                int start = Math.Max(0, pDiffPos - CONTEXT_BYTES);
+                int originalLen = Math.Min(pOriginal.Length - start, CONTEXT_BYTES * 2);
+                int reserializedLen = Math.Min(pReserialized.Length - start, CONTEXT_BYTES * 2);
+
+                var originalSnippet = System.Text.Encoding.UTF8.GetString(pOriginal, start, originalLen);
+                var reserializedSnippet = System.Text.Encoding.UTF8.GetString(pReserialized, start, reserializedLen);
+
+                return $"Original: ...{originalSnippet}... | Re-serialized: ...{reserializedSnippet}...";
+            }
+            catch
+            {
+                return "(binary content, text snippet unavailable)";
+            }
+        }
+
+        /// <summary>
         /// Generate bundle size report
         /// </summary>
         private static void GenerateBundleSizeReport(BuildContext context)
@@ -308,7 +497,7 @@ namespace HyperContent.Editor.Build
                 return;
             }
             
-            var outputDir = context.Config.outputDirectory;
+            var bundleDir = context.Config.BundleOutputDirectory;
             var bundleSizes = new List<BundleSizeInfo>();
             long totalSize = 0;
             
@@ -334,7 +523,7 @@ namespace HyperContent.Editor.Build
                     }
                 }
                 
-                var bundlePath = Path.Combine(outputDir, bundleFileName);
+                var bundlePath = Path.Combine(bundleDir, bundleFileName);
                 bundlePath = bundlePath.Replace("\\", "/"); // Normalize path separators
                 
                 if (File.Exists(bundlePath))

@@ -1,84 +1,100 @@
 using UnityEngine;
-using HyperContent;
+using com.igg.hypercontent;
+using com.igg.hypercontent.shared;
 
-namespace HyperContent.Examples
+namespace com.igg.hypercontent.runtime
 {
     /// <summary>
-    /// POC测试脚本 - 演示最小可用链路
+    /// POC test script — demonstrates the static facade API with ContentHandle.
+    /// Usage: add to a scene; on Start calls <see cref="HyperContent.InitializeAsync"/> (same as production).
+    /// Editor: use HyperContent build output + bundle play mode, or Asset Database play mode (HyperContent window, Overview tab).
     /// </summary>
     public class HyperContentTest : MonoBehaviour
     {
-        [Header("Catalog Settings")]
-        [Tooltip("Catalog文件名（放在StreamingAssets目录）")]
-        public string catalogFileName = "test.catalog.json";
-        
         [Header("Test Asset")]
-        [Tooltip("要加载的资产键")]
-        public string testAssetKey = "test_sprite";
-        
+        [Tooltip("Asset address to load")]
+        public string testAssetAddress = "test_sprite";
+
+        [Tooltip("When enabled, logs the wall-clock time between LoadAsync invocation and Completed callback " +
+                 "(useful for before/after comparison of catalog/provider optimizations).")]
+        public bool logLoadLatency = true;
+
+        private ContentHandle<Texture2D> _activeHandle;
+        private float _loadStartTime;
+
         private void Start()
         {
-            // 确保HyperContentManager存在
-            if (HyperContentManager.Instance == null)
+            HyperContent.OnLoadSucceeded += addr =>
+                HCLogger.LogInfo($"[Test] Load succeeded: {addr}");
+
+            HyperContent.OnLoadFailed += (addr, ex) =>
+                HCLogger.LogError($"[Test] Load failed: {addr}, {ex?.Message}");
+
+            if (HyperContent.IsInitialized)
             {
-                var managerObj = new GameObject("HyperContentManager");
-                managerObj.AddComponent<HyperContentManager>();
-            }
-            
-            // 初始化HyperContent系统
-            if (HyperContentManager.Instance.Initialize(catalogFileName))
-            {
-                Debug.Log($"[HyperContentTest] System initialized with catalog: {catalogFileName}");
-                
-                // 测试加载资源
+                HCLogger.LogInfo("[Test] HyperContent already initialized");
                 TestLoadAsset();
+                return;
             }
-            else
+
+            HyperContent.Initialize(ok =>
             {
-                Debug.LogError($"[HyperContentTest] Failed to initialize with catalog: {catalogFileName}");
-            }
+                if (!ok)
+                {
+                    HCLogger.LogError(
+                        "[Test] HyperContent.Initialize failed. " +
+                        "Use Editor play mode + HyperContent build (hc/settings.json + catalog) or Asset Database mode.");
+                    return;
+                }
+
+                HCLogger.LogInfo("[Test] HyperContent initialized");
+                TestLoadAsset();
+            });
         }
-        
+
         private void TestLoadAsset()
         {
-            if (string.IsNullOrEmpty(testAssetKey))
+            if (string.IsNullOrEmpty(testAssetAddress))
             {
-                Debug.LogWarning("[HyperContentTest] Test asset key is empty");
+                HCLogger.LogWarn("[Test] Test asset address is empty");
                 return;
             }
-            
-            var provider = HyperContentManager.ResourceProvider;
-            if (provider == null)
+
+            _loadStartTime = Time.realtimeSinceStartup;
+            _activeHandle = HyperContent.LoadAsync<Texture2D>(testAssetAddress);
+            if (!_activeHandle.IsValid)
             {
-                Debug.LogError("[HyperContentTest] ResourceProvider is null");
+                HCLogger.LogError("[Test] LoadAsync returned invalid handle — check catalog");
                 return;
             }
-            
-            // 尝试加载Sprite
-            var sprite = provider.LoadAsset<Sprite>(testAssetKey);
-            if (sprite != null)
+
+            _activeHandle.Completed += h =>
             {
-                Debug.Log($"[HyperContentTest] Successfully loaded asset: {testAssetKey}");
-            }
-            else
-            {
-                // 尝试加载其他类型
-                var texture = provider.LoadAsset<Texture2D>(testAssetKey);
-                if (texture != null)
+                if (logLoadLatency)
                 {
-                    Debug.Log($"[HyperContentTest] Successfully loaded texture: {testAssetKey}");
+                    float elapsedMs = (Time.realtimeSinceStartup - _loadStartTime) * 1000f;
+                    HCLogger.LogInfo($"[Test] LoadAsync → Completed elapsed={elapsedMs:F2} ms ({testAssetAddress})");
+                }
+
+                if (h.IsSuccess)
+                {
+                    var tex = h.Result;
+                    HCLogger.LogInfo($"[Test] Loaded texture: {tex?.name} ({tex?.width}x{tex?.height})");
                 }
                 else
                 {
-                    Debug.LogWarning($"[HyperContentTest] Failed to load asset: {testAssetKey}");
+                    HCLogger.LogError($"[Test] Load failed: {h.Error}");
                 }
-            }
+            };
         }
-        
+
         private void OnDestroy()
         {
-            // 清理资源
-            HyperContentManager.ResourceProvider?.ReleaseAll();
+            if (_activeHandle.IsValid)
+            {
+                HyperContent.Release(_activeHandle);
+                _activeHandle = default;
+            }
         }
     }
 }

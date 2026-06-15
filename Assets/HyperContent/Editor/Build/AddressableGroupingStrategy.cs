@@ -1,12 +1,14 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using com.igg.hypercontent.shared;
 using UnityEditor;
 using UnityEditor.AddressableAssets;
 using UnityEditor.AddressableAssets.Settings;
+using UnityEditor.AddressableAssets.Settings.GroupSchemas;
 using UnityEngine;
 
-namespace HyperContent.Editor.Build
+namespace com.igg.hypercontent.editor
 {
     /// <summary>
     /// Grouping strategy that uses Addressable groups to determine bundle assignments
@@ -33,10 +35,11 @@ namespace HyperContent.Editor.Build
                 // Clear existing bundle assignments
                 context.AssetToBundle.Clear();
                 context.BundleToAssets.Clear();
-                
+                context.BundleCompression.Clear();
+
                 // Build mapping from asset GUID to Addressable group name
                 // This is the "grouping data" we get from Addressable
-                var guidToGroupName = BuildGuidToGroupNameMap(settings);
+                var guidToGroupName = BuildGuidToGroupNameMapStatic(settings);
                 
                 // Apply grouping data to collected assets
                 var groupToAssets = new Dictionary<string, HashSet<string>>();
@@ -93,7 +96,9 @@ namespace HyperContent.Editor.Build
                 {
                     AddDependenciesToBundles(context);
                 }
-                
+
+                FillBundleCompressionFromAddressables(context, settings, guidToGroupName);
+
                 return true;
             }
             catch (Exception e)
@@ -137,10 +142,42 @@ namespace HyperContent.Editor.Build
         }
         
         /// <summary>
+        /// Fills <see cref="BuildPlan.BundleCompression"/> for every bundle in <see cref="BuildPlan.BundleToAssets"/> using
+        /// <see cref="BundledAssetGroupSchema"/> (same rules as <see cref="AssignBundles"/>).
+        /// Use when a grouping tool builds bundle names without this strategy (e.g. pack-mode–aware tools in another assembly).
+        /// </summary>
+        public static void FillBundleCompressionForPlan(BuildPlan plan, BuildConfig config)
+        {
+            if (plan?.BundleToAssets == null || plan.BundleToAssets.Count == 0 || config == null)
+                return;
+
+            var compression = new Dictionary<string, BundleCompressionType>(StringComparer.OrdinalIgnoreCase);
+            var ctx = new BuildContext
+            {
+                Config = config,
+                BundleToAssets = plan.BundleToAssets,
+                BundleCompression = compression
+            };
+
+            var settings = AddressableAssetSettingsDefaultObject.Settings;
+            if (settings == null)
+            {
+                foreach (var bundleName in plan.BundleToAssets.Keys)
+                    compression[bundleName] = config.compressionType;
+                plan.BundleCompression = compression;
+                return;
+            }
+
+            var guidToGroupName = BuildGuidToGroupNameMapStatic(settings);
+            FillBundleCompressionFromAddressables(ctx, settings, guidToGroupName);
+            plan.BundleCompression = compression;
+        }
+
+        /// <summary>
         /// Build a mapping from asset GUID to Addressable group name
         /// This extracts the "grouping data" from Addressable Groups
         /// </summary>
-        private Dictionary<string, string> BuildGuidToGroupNameMap(AddressableAssetSettings settings)
+        private static Dictionary<string, string> BuildGuidToGroupNameMapStatic(AddressableAssetSettings settings)
         {
             var guidToGroupName = new Dictionary<string, string>();
             
@@ -194,6 +231,41 @@ namespace HyperContent.Editor.Build
         }
         
         /// <summary>
+        /// One compression per bundle from <see cref="BundledAssetGroupSchema"/> (or <see cref="BuildConfig.compressionType"/> when no Addressable group is found for any asset in the bundle).
+        /// </summary>
+        private static void FillBundleCompressionFromAddressables(
+            BuildContext pContext,
+            AddressableAssetSettings pSettings,
+            Dictionary<string, string> pGuidToGroupName)
+        {
+            foreach (var bundleName in pContext.BundleToAssets.Keys)
+            {
+                string groupName = null;
+                foreach (var guid in pContext.BundleToAssets[bundleName])
+                {
+                    if (pGuidToGroupName.TryGetValue(guid, out var gn))
+                    {
+                        groupName = gn;
+                        break;
+                    }
+                }
+
+                BundledAssetGroupSchema schema = null;
+                if (groupName != null)
+                {
+                    var group = pSettings.FindGroup(groupName);
+                    schema = group?.GetSchema<BundledAssetGroupSchema>();
+                }
+
+                if (schema != null)
+                    pContext.BundleCompression[bundleName] =
+                        BundleCompressionTypeMapper.FromAddressableSchemaMode(schema.Compression);
+                else
+                    pContext.BundleCompression[bundleName] = pContext.Config.compressionType;
+            }
+        }
+
+        /// <summary>
         /// Sanitize bundle name to ensure it's valid
         /// </summary>
         private static string SanitizeBundleName(string name)
@@ -208,9 +280,9 @@ namespace HyperContent.Editor.Build
             name = name.Replace(" ", "_");
             
             // Ensure it doesn't exceed max length
-            if (name.Length > HyperContent.Shared.NamingRules.MAX_BUNDLE_NAME_LENGTH)
+            if (name.Length > NamingRules.MAX_BUNDLE_NAME_LENGTH)
             {
-                name = name.Substring(0, HyperContent.Shared.NamingRules.MAX_BUNDLE_NAME_LENGTH);
+                name = name.Substring(0, NamingRules.MAX_BUNDLE_NAME_LENGTH);
             }
             
             return name.ToLowerInvariant();

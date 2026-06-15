@@ -1,7 +1,8 @@
 using System.Collections.Generic;
+using com.igg.hypercontent.shared;
 using UnityEngine;
 
-namespace HyperContent.Editor.Build
+namespace com.igg.hypercontent.editor
 {
     /// <summary>
     /// Grouping strategy that uses HyperContentAsset markers to determine bundle assignments
@@ -15,6 +16,7 @@ namespace HyperContent.Editor.Build
         {
             context.AssetToBundle.Clear();
             context.BundleToAssets.Clear();
+            context.BundleCompression.Clear();
             
             foreach (var kvp in context.AssetMarkers)
             {
@@ -62,7 +64,10 @@ namespace HyperContent.Editor.Build
                     }
                 }
             }
-            
+
+            foreach (var bundleName in context.BundleToAssets.Keys)
+                context.BundleCompression[bundleName] = context.Config.compressionType;
+
             return true;
         }
         
@@ -87,9 +92,9 @@ namespace HyperContent.Editor.Build
             name = name.Replace(" ", "_");
             
             // Ensure it doesn't exceed max length
-            if (name.Length > HyperContent.Shared.NamingRules.MAX_BUNDLE_NAME_LENGTH)
+            if (name.Length > NamingRules.MAX_BUNDLE_NAME_LENGTH)
             {
-                name = name.Substring(0, HyperContent.Shared.NamingRules.MAX_BUNDLE_NAME_LENGTH);
+                name = name.Substring(0, NamingRules.MAX_BUNDLE_NAME_LENGTH);
             }
             
             return name.ToLowerInvariant();

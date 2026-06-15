@@ -24,8 +24,8 @@
 
 ## 第二步：配置构建
 
-1. 打开构建窗口：`HyperContent > Build Window`
-2. 配置参数：
+1. 打开 HyperContent 窗口：`HyperContent > HyperContent Window`（**Settings** 页配置分组与执行器，**Overview** 页常用操作与 Play Mode）。
+2. 配置参数（Settings 页）：
    - **Catalog Name**: 设置catalog名称（如 "main_catalog"）
    - **Output Directory**: 设置输出目录（默认：Assets/StreamingAssets）
    - **Build Target**: 选择目标平台
@@ -68,7 +68,7 @@
 
 构建完成后，检查：
 
-1. **Catalog文件**: `{OutputDirectory}/{CatalogName}.catalog.json`
+1. **Catalog文件**: `{OutputDirectory}/HyperCatalog.bin`
 2. **Bundle文件**: `{OutputDirectory}/*.bundle`
 3. **控制台输出**: 查看是否有错误或警告
 4. **构建报告**: 如果启用了报告，查看bundle大小和依赖信息

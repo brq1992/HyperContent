@@ -1,15 +1,26 @@
 using System;
 using System.Collections.Generic;
-using System.Collections;
+using System.Threading;
 using UnityEngine;
 using UnityEngine.Networking;
-using HyperContent.Shared;
+using com.igg.hypercontent.shared;
 
-namespace HyperContent
+namespace com.igg.hypercontent.runtime
 {
     /// <summary>
-    /// HTTP-based bundle transport implementation
-    /// Supports timeout, retry, and concurrent downloads
+    /// HTTP-based bundle transport implementation.
+    /// Fully callback-driven — never blocks the main thread and has <b>no</b> internal
+    /// <c>async/await</c>. Uses <see cref="UnityWebRequestAsyncOperation.completed"/> for
+    /// transition events, <see cref="HyperContentRunner"/> for per-frame progress ticks, and
+    /// <see cref="HyperContentRunner.Schedule"/> for retry backoff. Matches Addressables'
+    /// resource-manager style state-machine approach (no per-attempt async state machine).
+    ///
+    /// Relative URLs (no scheme) are resolved as <c>{base}{platform}/{path}</c>, where <c>platform</c> is
+    /// <see cref="HyperContentPaths.RemoteBundlePlatformSegment"/> (same folder names as local package bundles).
+    /// Catalog passes an extensionless segment; this transport appends <see cref="NamingRules.BUNDLE_FILE_EXTENSION"/>
+    /// before composing the URL so CDN files stay <c>*.bundle</c>.
+    ///
+    /// HTTP Range / resume: deferred — see <c>Assets/HyperContent/docs/TODO.md</c> (marked item).
     /// </summary>
     public class HttpBundleTransport : IBundleTransport
     {
@@ -17,319 +28,404 @@ namespace HyperContent
         private int _timeoutSeconds;
         private int _maxRetries;
         private int _maxConcurrentDownloads;
-        
-        // Active download operations
-        private Dictionary<string, DownloadOperation> _activeDownloads = new Dictionary<string, DownloadOperation>();
-        private Queue<string> _downloadQueue = new Queue<string>();
-        private int _currentConcurrentDownloads = 0;
-        
-        // Default configuration
+
+        private readonly Dictionary<string, CancellationTokenSource> _activeDownloadTokenDict
+            = new Dictionary<string, CancellationTokenSource>();
+        private readonly Queue<QueuedDownload> _pendingQueue = new Queue<QueuedDownload>();
+        private int _currentConcurrentDownloads;
+
         private const int DEFAULT_TIMEOUT_SECONDS = 30;
         private const int DEFAULT_MAX_RETRIES = 3;
         private const int DEFAULT_MAX_CONCURRENT = 4;
-        
-        /// <summary>
-        /// Download operation state
-        /// </summary>
-        private class DownloadOperation
+
+        private struct QueuedDownload
         {
-            public string Url;
-            public UnityWebRequest Request;
-            public Action<float> OnProgress;
-            public Action<FetchResult> OnComplete;
-            public int RetryCount;
-            public float StartTime;
-            public bool IsCancelled;
+            public string url;
+            public Action<float> onProgress;
+            public Action<FetchResult> onComplete;
+            public CancellationToken cancellationToken;
         }
-        
-        public bool Initialize(string baseUrl, int timeoutSeconds = 30)
+
+        public bool Initialize(string pBaseUrl, int pTimeoutSeconds = 30)
         {
-            _baseUrl = baseUrl;
-            _timeoutSeconds = timeoutSeconds > 0 ? timeoutSeconds : DEFAULT_TIMEOUT_SECONDS;
+            _baseUrl = pBaseUrl;
+            _timeoutSeconds = pTimeoutSeconds > 0 ? pTimeoutSeconds : DEFAULT_TIMEOUT_SECONDS;
             _maxRetries = DEFAULT_MAX_RETRIES;
             _maxConcurrentDownloads = DEFAULT_MAX_CONCURRENT;
-            
-            // Ensure baseUrl ends with /
+
             if (!string.IsNullOrEmpty(_baseUrl) && !_baseUrl.EndsWith("/"))
             {
                 _baseUrl += "/";
             }
-            
-            Debug.Log($"[HyperContent] HttpBundleTransport initialized: baseUrl={_baseUrl}, timeout={_timeoutSeconds}s");
+
+            HCLogger.LogInfo($"HttpBundleTransport initialized: baseUrl={_baseUrl}, timeout={_timeoutSeconds}s");
             return true;
         }
-        
+
         /// <summary>
-        /// Set maximum retry count
+        /// Set or update the base URL for remote bundle downloads at runtime.
+        /// Call this when remoteBundleBaseUrl was empty in settings.json (e.g. Update Build left it blank).
         /// </summary>
-        public void SetMaxRetries(int maxRetries)
+        public void SetBaseUrl(string pBaseUrl)
         {
-            _maxRetries = maxRetries > 0 ? maxRetries : DEFAULT_MAX_RETRIES;
+            _baseUrl = pBaseUrl ?? "";
+            if (!string.IsNullOrEmpty(_baseUrl) && !_baseUrl.EndsWith("/"))
+                _baseUrl += "/";
+            HCLogger.LogInfo($"HttpBundleTransport base URL updated: {_baseUrl}");
         }
-        
-        /// <summary>
-        /// Set maximum concurrent downloads
-        /// </summary>
-        public void SetMaxConcurrentDownloads(int maxConcurrent)
+
+        public void SetMaxRetries(int pMaxRetries)
         {
-            _maxConcurrentDownloads = maxConcurrent > 0 ? maxConcurrent : DEFAULT_MAX_CONCURRENT;
+            _maxRetries = pMaxRetries > 0 ? pMaxRetries : DEFAULT_MAX_RETRIES;
         }
-        
-        public void DownloadAsync(string url, Action<float> onProgress, Action<FetchResult> onComplete)
+
+        public void SetMaxConcurrentDownloads(int pMaxConcurrent)
         {
-            if (string.IsNullOrEmpty(url))
+            _maxConcurrentDownloads = pMaxConcurrent > 0 ? pMaxConcurrent : DEFAULT_MAX_CONCURRENT;
+        }
+
+        // ── IBundleTransport: Callback-based async (primary) ────────────────
+
+        public void DownloadAsync(string pUrl, Action<float> pOnProgress, Action<FetchResult> pOnComplete,
+            CancellationToken pCt = default)
+        {
+            if (string.IsNullOrEmpty(pUrl))
             {
-                onComplete?.Invoke(FetchResult.CreateFailure(
-                    ErrorCode.TRANSPORT_INVALID_URL,
-                    "URL is null or empty"
-                ));
+                pOnComplete?.Invoke(FetchResult.CreateFailure(
+                    ErrorCode.TRANSPORT_INVALID_URL, "URL is null or empty"));
                 return;
             }
-            
-            // Build full URL if baseUrl is set
-            string fullUrl = url;
-            if (!string.IsNullOrEmpty(_baseUrl) && !url.StartsWith("http://") && !url.StartsWith("https://"))
+
+            string fullUrl = ResolveUrl(pUrl);
+
+            if (_activeDownloadTokenDict.ContainsKey(fullUrl))
             {
-                fullUrl = _baseUrl + url;
-            }
-            
-            // Check if already downloading
-            if (_activeDownloads.ContainsKey(fullUrl))
-            {
-                Debug.LogWarning($"[HyperContent] Download already in progress: {fullUrl}");
+                HCLogger.LogWarn($"Download already in progress: {fullUrl}");
                 return;
             }
-            
-            // Start download
-            StartDownload(fullUrl, onProgress, onComplete);
-        }
-        
-        private void StartDownload(string url, Action<float> onProgress, Action<FetchResult> onComplete)
-        {
-            // Check concurrent limit
+
             if (_currentConcurrentDownloads >= _maxConcurrentDownloads)
             {
-                _downloadQueue.Enqueue(url);
-                Debug.Log($"[HyperContent] Download queued (concurrent limit reached): {url}");
+                _pendingQueue.Enqueue(new QueuedDownload
+                {
+                    url = fullUrl,
+                    onProgress = pOnProgress,
+                    onComplete = pOnComplete,
+                    cancellationToken = pCt
+                });
+                HCLogger.LogVerbose($"Download queued (concurrent limit reached): {fullUrl}");
                 return;
             }
-            
-            _currentConcurrentDownloads++;
-            
-            var operation = new DownloadOperation
-            {
-                Url = url,
-                OnProgress = onProgress,
-                OnComplete = onComplete,
-                RetryCount = 0,
-                StartTime = Time.realtimeSinceStartup,
-                IsCancelled = false
-            };
-            
-            _activeDownloads[url] = operation;
-            
-            // Start coroutine for download
-            HyperContentManager.Instance.StartCoroutine(DownloadCoroutine(operation));
+
+            StartDownload(fullUrl, pOnProgress, pOnComplete, pCt);
         }
-        
-        private IEnumerator DownloadCoroutine(DownloadOperation operation)
+
+        // ── IBundleTransport: Sync (deprecated) ─────────────────────────────
+
+        [Obsolete("Blocks main thread. Use DownloadAsync(url, onProgress, onComplete, ct) instead.")]
+        public FetchResult Download(string pUrl, out byte[] pData)
         {
-            string url = operation.Url;
-            int retryCount = 0;
-            FetchResult result = null;
-            
-            while (retryCount <= _maxRetries && !operation.IsCancelled)
-            {
-                operation.RetryCount = retryCount;
-                float attemptStartTime = Time.realtimeSinceStartup;
-                
-                // Create UnityWebRequest
-                UnityWebRequest request = UnityWebRequest.Get(url);
-                request.timeout = _timeoutSeconds;
-                operation.Request = request;
-                
-                // Send request
-                var asyncOp = request.SendWebRequest();
-                
-                // Progress tracking
-                while (!asyncOp.isDone && !operation.IsCancelled)
-                {
-                    float progress = asyncOp.progress;
-                    operation.OnProgress?.Invoke(progress);
-                    yield return null;
-                }
-                
-                if (operation.IsCancelled)
-                {
-                    request.Abort();
-                    request.Dispose();
-                    result = FetchResult.CreateFailure(
-                        ErrorCode.TRANSPORT_DOWNLOAD_FAILED,
-                        "Download cancelled",
-                        (long)((Time.realtimeSinceStartup - attemptStartTime) * 1000)
-                    );
-                    break;
-                }
-                
-                // Check result
-                if (request.result == UnityWebRequest.Result.Success)
-                {
-                    byte[] data = request.downloadHandler.data;
-                    long durationMs = (long)((Time.realtimeSinceStartup - attemptStartTime) * 1000);
-                    
-                    result = FetchResult.CreateSuccess(data.Length, durationMs);
-                    request.Dispose();
-                    break;
-                }
-                else
-                {
-                    // Check if should retry
-                    bool shouldRetry = false;
-                    int errorCode = ErrorCode.TRANSPORT_NETWORK_ERROR;
-                    string errorMsg = request.error;
-                    
-                    if (request.result == UnityWebRequest.Result.ConnectionError ||
-                        request.result == UnityWebRequest.Result.DataProcessingError)
-                    {
-                        shouldRetry = retryCount < _maxRetries;
-                        errorCode = ErrorCode.TRANSPORT_NETWORK_ERROR;
-                    }
-                    else if (request.result == UnityWebRequest.Result.ProtocolError)
-                    {
-                        // HTTP errors (4xx, 5xx) - retry only for 5xx
-                        int httpCode = (int)request.responseCode;
-                        if (httpCode >= 500 && retryCount < _maxRetries)
-                        {
-                            shouldRetry = true;
-                        }
-                        errorCode = ErrorCode.TRANSPORT_DOWNLOAD_FAILED;
-                        errorMsg = $"HTTP {httpCode}: {request.error}";
-                    }
-                    
-                    request.Dispose();
-                    
-                    if (shouldRetry)
-                    {
-                        retryCount++;
-                        Debug.LogWarning($"[HyperContent] Download failed, retrying ({retryCount}/{_maxRetries}): {url}, error: {errorMsg}");
-                        yield return new WaitForSeconds(1.0f * retryCount); // Exponential backoff
-                        continue;
-                    }
-                    else
-                    {
-                        long durationMs = (long)((Time.realtimeSinceStartup - attemptStartTime) * 1000);
-                        result = FetchResult.CreateFailure(errorCode, errorMsg, durationMs);
-                        break;
-                    }
-                }
-            }
-            
-            // Cleanup
-            _activeDownloads.Remove(url);
-            _currentConcurrentDownloads--;
-            
-            // Invoke callback
-            if (result != null)
-            {
-                operation.OnComplete?.Invoke(result);
-            }
-            
-            // Process queued downloads
-            ProcessDownloadQueue();
-        }
-        
-        private void ProcessDownloadQueue()
-        {
-            while (_downloadQueue.Count > 0 && _currentConcurrentDownloads < _maxConcurrentDownloads)
-            {
-                string queuedUrl = _downloadQueue.Dequeue();
-                // Reconstruct operation from queue - this is simplified
-                // In real implementation, we'd need to store the callbacks
-                Debug.LogWarning($"[HyperContent] Queued download callback lost: {queuedUrl}");
-            }
-        }
-        
-        public FetchResult Download(string url, out byte[] data)
-        {
-            data = null;
-            
-            if (string.IsNullOrEmpty(url))
+            pData = null;
+
+            if (string.IsNullOrEmpty(pUrl))
             {
                 return FetchResult.CreateFailure(
-                    ErrorCode.TRANSPORT_INVALID_URL,
-                    "URL is null or empty"
-                );
+                    ErrorCode.TRANSPORT_INVALID_URL, "URL is null or empty");
             }
-            
-            // Build full URL
-            string fullUrl = url;
-            if (!string.IsNullOrEmpty(_baseUrl) && !url.StartsWith("http://") && !url.StartsWith("https://"))
+
+            string fullUrl = ResolveUrl(pUrl);
+
+            using (var request = UnityWebRequest.Get(fullUrl))
             {
-                fullUrl = _baseUrl + url;
-            }
-            
-            // Use UnityWebRequest synchronously (blocking)
-            UnityWebRequest request = UnityWebRequest.Get(fullUrl);
-            request.timeout = _timeoutSeconds;
-            
-            var asyncOp = request.SendWebRequest();
-            
-            // Wait for completion
-            while (!asyncOp.isDone)
-            {
-                // Block until done
-            }
-            
-            FetchResult result;
-            if (request.result == UnityWebRequest.Result.Success)
-            {
-                data = request.downloadHandler.data;
-                result = FetchResult.CreateSuccess(data.Length, 0);
-            }
-            else
-            {
-                // Check if timeout by examining error message or request result
+                request.timeout = _timeoutSeconds;
+                var asyncOp = request.SendWebRequest();
+
+                while (!asyncOp.isDone) { }
+
+                if (request.result == UnityWebRequest.Result.Success)
+                {
+                    pData = request.downloadHandler.data;
+                    return FetchResult.CreateSuccess(pData.Length, 0);
+                }
+
                 int errorCode = ErrorCode.TRANSPORT_DOWNLOAD_FAILED;
-                if (request.result == UnityWebRequest.Result.ConnectionError && 
-                    (request.error != null && request.error.Contains("timeout")))
+                if (request.result == UnityWebRequest.Result.ConnectionError &&
+                    request.error != null && request.error.Contains("timeout"))
                 {
                     errorCode = ErrorCode.TRANSPORT_TIMEOUT;
                 }
-                result = FetchResult.CreateFailure(errorCode, request.error);
+                return FetchResult.CreateFailure(errorCode, request.error);
             }
-            
-            request.Dispose();
-            return result;
         }
-        
-        public void CancelDownload(string url)
+
+        public void CancelDownload(string pUrl)
         {
-            string fullUrl = url;
-            if (!string.IsNullOrEmpty(_baseUrl) && !url.StartsWith("http://") && !url.StartsWith("https://"))
+            string fullUrl = ResolveUrl(pUrl);
+
+            if (_activeDownloadTokenDict.TryGetValue(fullUrl, out var cts))
             {
-                fullUrl = _baseUrl + url;
+                cts.Cancel();
+                HCLogger.LogVerbose($"Download cancelled: {fullUrl}");
             }
-            
-            if (_activeDownloads.TryGetValue(fullUrl, out var operation))
+        }
+
+        public bool IsDownloading(string pUrl)
+        {
+            string fullUrl = ResolveUrl(pUrl);
+            return _activeDownloadTokenDict.ContainsKey(fullUrl);
+        }
+
+        // ── Internal callback engine ────────────────────────────────────────
+
+        /// <summary>
+        /// Per-download state bag: holds the <see cref="UnityWebRequest"/>, cancellation plumbing,
+        /// progress-tick subscription, and retry counter. One instance per URL, disposed in
+        /// <see cref="Finish"/>. Intentionally a class so callbacks can capture by reference
+        /// without closure allocations per call site.
+        /// </summary>
+        private sealed class HttpDownload
+        {
+            public HttpBundleTransport owner;
+            public string url;
+            public Action<float> onProgress;
+            public Action<FetchResult> onComplete;
+            public CancellationToken originalToken;
+            public CancellationTokenSource cts;
+
+            public int attempt;
+            public float attemptStartTime;
+
+            public UnityWebRequest request;
+            public CancellationTokenRegistration abortRegistration;
+            public Action progressTickCached;
+            public bool progressTickRegistered;
+            public int scheduledRetryToken;
+            public bool finished;
+        }
+
+        private void StartDownload(string pUrl, Action<float> pOnProgress, Action<FetchResult> pOnComplete,
+            CancellationToken pCt)
+        {
+            _currentConcurrentDownloads++;
+            var cts = pCt.CanBeCanceled
+                ? CancellationTokenSource.CreateLinkedTokenSource(pCt)
+                : new CancellationTokenSource();
+            _activeDownloadTokenDict[pUrl] = cts;
+
+            var state = new HttpDownload
             {
-                operation.IsCancelled = true;
-                if (operation.Request != null)
+                owner = this,
+                url = pUrl,
+                onProgress = pOnProgress,
+                onComplete = pOnComplete,
+                originalToken = pCt,
+                cts = cts,
+                attempt = 0
+            };
+            state.progressTickCached = () => OnProgressTick(state);
+
+            BeginAttempt(state);
+        }
+
+        private void BeginAttempt(HttpDownload pState)
+        {
+            if (pState.finished) return;
+
+            if (pState.cts.IsCancellationRequested)
+            {
+                Finish(pState, FetchResult.CreateFailure(ErrorCode.OPERATION_CANCELLED, "Download cancelled"));
+                return;
+            }
+
+            pState.attemptStartTime = Time.realtimeSinceStartup;
+
+            try
+            {
+                pState.request = UnityWebRequest.Get(pState.url);
+                pState.request.timeout = _timeoutSeconds;
+            }
+            catch (Exception e)
+            {
+                HCLogger.LogError($"Failed to construct UnityWebRequest for {pState.url}: {e.Message}");
+                Finish(pState, FetchResult.CreateFailure(ErrorCode.TRANSPORT_DOWNLOAD_FAILED, e.Message));
+                return;
+            }
+
+            if (pState.cts.Token.CanBeCanceled)
+            {
+                var localRequest = pState.request;
+                pState.abortRegistration = pState.cts.Token.Register(() =>
                 {
-                    operation.Request.Abort();
-                }
-                Debug.Log($"[HyperContent] Download cancelled: {fullUrl}");
+                    try { localRequest.Abort(); } catch { /* ignore */ }
+                });
+            }
+
+            var asyncOp = pState.request.SendWebRequest();
+
+            if (pState.onProgress != null)
+            {
+                HyperContentRunner.Instance.AddUpdate(pState.progressTickCached);
+                pState.progressTickRegistered = true;
+            }
+
+            asyncOp.completed += _ => OnAttemptCompleted(pState);
+        }
+
+        private void OnProgressTick(HttpDownload pState)
+        {
+            if (pState.finished || pState.request == null) return;
+            try { pState.onProgress?.Invoke(pState.request.downloadProgress); }
+            catch (Exception e) { HCLogger.LogError($"[HttpBundleTransport] onProgress threw: {e.Message}"); }
+        }
+
+        private void OnAttemptCompleted(HttpDownload pState)
+        {
+            if (pState.finished) return;
+
+            if (pState.progressTickRegistered)
+            {
+                HyperContentRunner.Instance.RemoveUpdate(pState.progressTickCached);
+                pState.progressTickRegistered = false;
+            }
+
+            pState.abortRegistration.Dispose();
+            pState.abortRegistration = default;
+
+            long durationMs = (long)((Time.realtimeSinceStartup - pState.attemptStartTime) * 1000);
+            var request = pState.request;
+
+            if (pState.cts.IsCancellationRequested)
+            {
+                DisposeRequest(pState);
+                Finish(pState, FetchResult.CreateFailure(ErrorCode.OPERATION_CANCELLED, "Download cancelled", durationMs));
+                return;
+            }
+
+            if (request.result == UnityWebRequest.Result.Success)
+            {
+                byte[] data = request.downloadHandler.data;
+                try { pState.onProgress?.Invoke(1f); }
+                catch (Exception e) { HCLogger.LogError($"[HttpBundleTransport] final onProgress threw: {e.Message}"); }
+
+                var result = FetchResult.CreateSuccess(data.Length, durationMs);
+                result.Data = data;
+                DisposeRequest(pState);
+                Finish(pState, result);
+                return;
+            }
+
+            bool canRetry = pState.attempt < _maxRetries && ShouldRetry(request);
+            if (canRetry)
+            {
+                pState.attempt++;
+                float backoffSeconds = Mathf.Pow(2, pState.attempt - 1);
+                HCLogger.LogWarn($"Download failed, retrying ({pState.attempt}/{_maxRetries}): {pState.url}, " +
+                    $"error: {request.error}");
+
+                DisposeRequest(pState);
+
+                pState.scheduledRetryToken = HyperContentRunner.Instance.Schedule(backoffSeconds,
+                    () => BeginAttempt(pState));
+                return;
+            }
+
+            int errorCode = request.result == UnityWebRequest.Result.ConnectionError
+                ? ErrorCode.TRANSPORT_NETWORK_ERROR
+                : ErrorCode.TRANSPORT_DOWNLOAD_FAILED;
+            string errorMsg = request.error;
+            if (request.result == UnityWebRequest.Result.ProtocolError)
+            {
+                errorMsg = $"HTTP {request.responseCode}: {request.error}";
+            }
+
+            DisposeRequest(pState);
+            Finish(pState, FetchResult.CreateFailure(errorCode, errorMsg, durationMs));
+        }
+
+        private static void DisposeRequest(HttpDownload pState)
+        {
+            if (pState.request != null)
+            {
+                try { pState.request.Dispose(); } catch { /* ignore */ }
+                pState.request = null;
             }
         }
-        
-        public bool IsDownloading(string url)
+
+        private void Finish(HttpDownload pState, FetchResult pResult)
         {
-            string fullUrl = url;
-            if (!string.IsNullOrEmpty(_baseUrl) && !url.StartsWith("http://") && !url.StartsWith("https://"))
+            if (pState.finished) return;
+            pState.finished = true;
+
+            if (pState.scheduledRetryToken != 0)
             {
-                fullUrl = _baseUrl + url;
+                HyperContentRunner.Instance.CancelSchedule(pState.scheduledRetryToken);
+                pState.scheduledRetryToken = 0;
             }
-            
-            return _activeDownloads.ContainsKey(fullUrl);
+
+            if (pState.progressTickRegistered)
+            {
+                HyperContentRunner.Instance.RemoveUpdate(pState.progressTickCached);
+                pState.progressTickRegistered = false;
+            }
+
+            pState.abortRegistration.Dispose();
+            DisposeRequest(pState);
+
+            _activeDownloadTokenDict.Remove(pState.url);
+            try { pState.cts.Dispose(); } catch { /* ignore */ }
+            _currentConcurrentDownloads--;
+
+            try { pState.onComplete?.Invoke(pResult); }
+            catch (Exception e) { HCLogger.LogError($"[HttpBundleTransport] onComplete threw: {e.Message}"); }
+
+            DrainPendingQueue();
+        }
+
+        private static bool ShouldRetry(UnityWebRequest pRequest)
+        {
+            if (pRequest.result == UnityWebRequest.Result.ConnectionError ||
+                pRequest.result == UnityWebRequest.Result.DataProcessingError)
+            {
+                return true;
+            }
+
+            if (pRequest.result == UnityWebRequest.Result.ProtocolError &&
+                pRequest.responseCode >= 500)
+            {
+                return true;
+            }
+
+            return false;
+        }
+
+        private void DrainPendingQueue()
+        {
+            while (_pendingQueue.Count > 0 && _currentConcurrentDownloads < _maxConcurrentDownloads)
+            {
+                var queued = _pendingQueue.Dequeue();
+                if (_activeDownloadTokenDict.ContainsKey(queued.url))
+                {
+                    HCLogger.LogWarn($"Queued download already active, skipping: {queued.url}");
+                    continue;
+                }
+                StartDownload(queued.url, queued.onProgress, queued.onComplete, queued.cancellationToken);
+            }
+        }
+
+        private string ResolveUrl(string pUrl)
+        {
+            if (string.IsNullOrEmpty(pUrl))
+                return pUrl;
+
+            string path = pUrl.Trim();
+            if (!path.StartsWith("http://", StringComparison.OrdinalIgnoreCase) &&
+                !path.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+            {
+                path = NamingRules.ToTransportRelativeBundlePath(path);
+            }
+
+            string combined = HyperContentPaths.CombineRemoteCdnRequestUrl(_baseUrl, path);
+            return combined ?? path;
         }
     }
 }

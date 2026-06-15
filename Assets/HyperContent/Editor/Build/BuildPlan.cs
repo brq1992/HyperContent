@@ -1,7 +1,8 @@
 using System;
 using System.Collections.Generic;
+using com.igg.hypercontent.runtime;
 
-namespace HyperContent.Editor.Build
+namespace com.igg.hypercontent.editor
 {
     /// <summary>
     /// Build plan produced by grouping tools
@@ -45,10 +46,17 @@ namespace HyperContent.Editor.Build
         public Dictionary<string, HashSet<string>> BundleDependencies { get; set; } = new Dictionary<string, HashSet<string>>();
         
         /// <summary>
-        /// Mapping from bundle name to compression type
-        /// If a bundle is not in this dictionary, use default compression from BuildConfig
+        /// Per-bundle compression from the grouping tool. Must contain one entry per key in <see cref="BundleToAssets"/> (case-insensitive keys).
         /// </summary>
-        public Dictionary<string, BundleCompressionType> BundleCompression { get; set; } = new Dictionary<string, BundleCompressionType>();
+        public Dictionary<string, BundleCompressionType> BundleCompression { get; set; } =
+            new Dictionary<string, BundleCompressionType>(StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>
+        /// Per-bundle flags from the grouping tool (build plan / "manual table" equivalent), e.g. Addressable entry labels → <see cref="BundleTagFlags"/>.
+        /// Merged at catalog generation with per-asset <see cref="HyperContentAsset"/> flags (OR). Keys use the same bundle names as <see cref="BundleToAssets"/>.
+        /// </summary>
+        public Dictionary<string, BundleTagFlags> BundleTagFlagsFromPlan { get; set; } =
+            new Dictionary<string, BundleTagFlags>(StringComparer.OrdinalIgnoreCase);
         
         /// <summary>
         /// Build errors found during grouping

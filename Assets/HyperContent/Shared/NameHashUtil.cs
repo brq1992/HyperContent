@@ -1,7 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 
-namespace HyperContent.Shared
+namespace com.igg.hypercontent.shared
 {
     /// <summary>
     /// Stable hash for asset names. Used for NameAlias lookup (GUID vs Name).

@@ -1,6 +1,6 @@
 using System.Collections.Generic;
 
-namespace HyperContent.Editor.Build
+namespace com.igg.hypercontent.editor
 {
     /// <summary>
     /// Interface for grouping tools that convert project assets into a BuildPlan
@@ -23,7 +23,9 @@ namespace HyperContent.Editor.Build
         string Description { get; }
         
         /// <summary>
-        /// Generate a build plan from project assets
+        /// Generate a build plan from project assets.
+        /// Implementations must fill <see cref="BuildPlan.BundleCompression"/> with one entry per bundle in <see cref="BuildPlan.BundleToAssets"/> (see grouping strategies).
+        /// Implementations may fill <see cref="BuildPlan.BundleTagFlagsFromPlan"/> (e.g. from Addressable group entry labels) for catalog <c>bundleTagFlags</c>; catalog generation ORs this with per-asset marker flags.
         /// </summary>
         /// <param name="config">Build configuration</param>
         /// <returns>Build plan containing asset-to-bundle assignments</returns>

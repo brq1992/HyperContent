@@ -1,8 +1,9 @@
 using System.Collections.Generic;
-using HyperContent.Shared;
+using com.igg.hypercontent.runtime;
+using com.igg.hypercontent.shared;
 using UnityEngine;
 
-namespace HyperContent.Editor
+namespace com.igg.hypercontent.editor
 {
     /// <summary>
     /// ScriptableObject for marking assets with HyperContent metadata
@@ -22,6 +23,14 @@ namespace HyperContent.Editor
         
         [Tooltip("Force this asset to be in its own bundle")]
         public bool forceSeparateBundle;
+
+        /// <summary>
+        /// If true, the bundle containing this asset is tagged <see cref="BundleTagFlags.Blocking"/> in the catalog
+        /// (batch prefetch before gameplay). OR semantics: any marked asset in the bundle sets the flag.
+        /// You may also add label <c>blocking</c> (case-insensitive) instead of using this field.
+        /// </summary>
+        [Tooltip("Tag this asset's bundle as Blocking in catalog (prefetch before gameplay). Any asset in the bundle can set this.")]
+        public bool markBundleBlocking;
         
         /// <summary>
         /// Validate asset key format
@@ -36,9 +45,9 @@ namespace HyperContent.Editor
                 return false;
             }
             
-            if (assetKey.Length > HyperContent.Shared.NamingRules.MAX_KEY_LENGTH)
+            if (assetKey.Length > NamingRules.MAX_KEY_LENGTH)
             {
-                error = $"Asset key exceeds maximum length of {HyperContent.Shared.NamingRules.MAX_KEY_LENGTH}";
+                error = $"Asset key exceeds maximum length of {NamingRules.MAX_KEY_LENGTH}";
                 return false;
             }
             
@@ -66,9 +75,9 @@ namespace HyperContent.Editor
                 return true;
             }
             
-            if (bundleGroup.Length > HyperContent.Shared.NamingRules.MAX_BUNDLE_NAME_LENGTH)
+            if (bundleGroup.Length > NamingRules.MAX_BUNDLE_NAME_LENGTH)
             {
-                error = $"Bundle group name exceeds maximum length of {HyperContent.Shared.NamingRules.MAX_BUNDLE_NAME_LENGTH}";
+                error = $"Bundle group name exceeds maximum length of {NamingRules.MAX_BUNDLE_NAME_LENGTH}";
                 return false;
             }
             

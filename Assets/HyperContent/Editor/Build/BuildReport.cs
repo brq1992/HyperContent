@@ -1,7 +1,7 @@
 using System;
 using System.Collections.Generic;
 
-namespace HyperContent.Editor.Build
+namespace com.igg.hypercontent.editor
 {
     /// <summary>
     /// Build report containing statistics and analysis

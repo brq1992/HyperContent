@@ -5,13 +5,15 @@ using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
 using UnityEngine;
-using HyperContent.Shared;
+using com.igg.hypercontent.shared;
 
-namespace HyperContent
+namespace com.igg.hypercontent.runtime
 {
     /// <summary>
-    /// Enhanced local file-based bundle store implementation
-    /// Features: atomic writes, corruption prevention, hash verification, prune strategy
+    /// Enhanced local file-based bundle store implementation.
+    /// Features: atomic writes, corruption prevention, hash verification, LRU prune strategy.
+    /// Update bundles (versioned names e.g. ui_common_update_202603051200) are stored and
+    /// verified by (bundleName, bundleHash); hash comes from catalog BundleRecordEntry.bundleHash.
     /// </summary>
     public class LocalBundleStore : IBundleStore
     {
@@ -19,6 +21,8 @@ namespace HyperContent
         private long _maxCacheSizeBytes;
         private Dictionary<string, CacheEntry> _cacheMetadata = new Dictionary<string, CacheEntry>();
         private const string METADATA_FILE = "cache_metadata.json";
+
+        public event Action<string> BundleChanged;
         
         /// <summary>
         /// Cache entry metadata for prune strategy
@@ -48,7 +52,7 @@ namespace HyperContent
             
             if (string.IsNullOrEmpty(_cacheRoot))
             {
-                _cacheRoot = Path.Combine(Application.persistentDataPath, "HyperContent", "Cache");
+                _cacheRoot = Path.Combine(Application.persistentDataPath, "HyperContent", "bundles");
             }
             
             // Default max cache size: 1GB
@@ -67,12 +71,12 @@ namespace HyperContent
                 // Verify existing files and remove corrupted ones
                 VerifyAndCleanCache();
                 
-                Debug.Log($"[HyperContent] BundleStore initialized: {_cacheRoot}, cache size: {GetCacheSize() / (1024 * 1024)}MB");
+                HCLogger.LogInfo($"BundleStore initialized: {_cacheRoot}, cache size: {GetCacheSize() / (1024 * 1024)}MB");
                 return true;
             }
             catch (System.Exception e)
             {
-                Debug.LogError($"[HyperContent] BundleStore initialization failed: {e.Message}");
+                HCLogger.LogError($"BundleStore initialization failed: {e.Message}");
                 return false;
             }
         }
@@ -102,7 +106,7 @@ namespace HyperContent
                     var fileInfo = new FileInfo(path);
                     if (fileInfo.Length != entry.size)
                     {
-                        Debug.LogWarning($"[HyperContent] Bundle size mismatch, removing: {bundleName}");
+                        HCLogger.LogWarn($"Bundle size mismatch, removing: {bundleName}");
                         Delete(bundleName);
                         return false;
                     }
@@ -132,7 +136,7 @@ namespace HyperContent
                     string actualHash = ComputeHash(data);
                     if (actualHash != hash)
                     {
-                        Debug.LogError($"[HyperContent] Hash mismatch for bundle {bundleName}, expected: {hash}, actual: {actualHash}");
+                        HCLogger.LogError($"Hash mismatch for bundle {bundleName}, expected: {hash}, actual: {actualHash}");
                         return false;
                     }
                 }
@@ -162,7 +166,7 @@ namespace HyperContent
                 if (verifyData.Length != data.Length)
                 {
                     File.Delete(tempPath);
-                    Debug.LogError($"[HyperContent] Write verification failed for bundle {bundleName}");
+                    HCLogger.LogError($"Write verification failed for bundle {bundleName}");
                     return false;
                 }
                 
@@ -173,7 +177,7 @@ namespace HyperContent
                     if (writtenHash != hash)
                     {
                         File.Delete(tempPath);
-                        Debug.LogError($"[HyperContent] Hash verification failed after write for bundle {bundleName}");
+                        HCLogger.LogError($"Hash verification failed after write for bundle {bundleName}");
                         return false;
                     }
                 }
@@ -200,12 +204,14 @@ namespace HyperContent
                 
                 // Prune cache if needed
                 PruneCacheIfNeeded();
-                
+
+                BundleChanged?.Invoke(bundleName);
+
                 return true;
             }
             catch (System.Exception e)
             {
-                Debug.LogError($"[HyperContent] Failed to save bundle {bundleName}: {e.Message}");
+                HCLogger.LogError($"Failed to save bundle {bundleName}: {e.Message}");
                 // Clean up temp file
                 string tempPath = GetBundlePath(bundleName) + ".tmp";
                 if (File.Exists(tempPath))
@@ -237,7 +243,7 @@ namespace HyperContent
                     // Check size
                     if (data.Length != entry.size)
                     {
-                        Debug.LogWarning($"[HyperContent] Bundle size mismatch during load: {bundleName}, expected: {entry.size}, actual: {data.Length}");
+                        HCLogger.LogWarn($"Bundle size mismatch during load: {bundleName}, expected: {entry.size}, actual: {data.Length}");
                         Delete(bundleName);
                         data = null;
                         return false;
@@ -247,7 +253,7 @@ namespace HyperContent
                     string actualHash = ComputeHash(data);
                     if (!string.IsNullOrEmpty(entry.hash) && actualHash != entry.hash)
                     {
-                        Debug.LogWarning($"[HyperContent] Bundle hash mismatch during load: {bundleName}");
+                        HCLogger.LogWarn($"Bundle hash mismatch during load: {bundleName}");
                         Delete(bundleName);
                         data = null;
                         return false;
@@ -265,7 +271,7 @@ namespace HyperContent
             }
             catch (System.Exception e)
             {
-                Debug.LogError($"[HyperContent] Failed to load bundle {bundleName}: {e.Message}");
+                HCLogger.LogError($"Failed to load bundle {bundleName}: {e.Message}");
                 // File might be corrupted, try to delete it
                 try
                 {
@@ -293,7 +299,7 @@ namespace HyperContent
             
             if (!isValid)
             {
-                Debug.LogWarning($"[HyperContent] Hash verification failed for bundle {bundleName}, expected: {expectedHash}, actual: {actualHash}");
+                HCLogger.LogWarn($"Hash verification failed for bundle {bundleName}, expected: {expectedHash}, actual: {actualHash}");
                 // Remove corrupted bundle
                 Delete(bundleName);
             }
@@ -324,12 +330,15 @@ namespace HyperContent
                 // Remove from metadata
                 _cacheMetadata.Remove(bundleName);
                 SaveCacheMetadata();
-                
+
+                if (deleted)
+                    BundleChanged?.Invoke(bundleName);
+
                 return deleted;
             }
             catch (System.Exception e)
             {
-                Debug.LogError($"[HyperContent] Failed to delete bundle {bundleName}: {e.Message}");
+                HCLogger.LogError($"Failed to delete bundle {bundleName}: {e.Message}");
                 return false;
             }
         }
@@ -375,10 +384,13 @@ namespace HyperContent
                 
                 _cacheMetadata.Clear();
                 SaveCacheMetadata();
+
+                // Signal "all bundles changed" to any subscriber (e.g. BundleFileProvider path cache).
+                BundleChanged?.Invoke(null);
             }
             catch (System.Exception e)
             {
-                Debug.LogError($"[HyperContent] Failed to clear cache: {e.Message}");
+                HCLogger.LogError($"Failed to clear cache: {e.Message}");
             }
         }
         
@@ -410,7 +422,7 @@ namespace HyperContent
                 if (Delete(entry.bundleName))
                 {
                     currentSize -= entry.size;
-                    Debug.Log($"[HyperContent] Pruned bundle: {entry.bundleName}, size: {entry.size}");
+                    HCLogger.LogVerbose($"Pruned bundle: {entry.bundleName}, size: {entry.size}");
                 }
             }
         }
@@ -446,7 +458,7 @@ namespace HyperContent
             }
             catch (Exception e)
             {
-                Debug.LogWarning($"[HyperContent] Failed to load cache metadata: {e.Message}");
+                HCLogger.LogWarn($"Failed to load cache metadata: {e.Message}");
             }
         }
         
@@ -465,7 +477,7 @@ namespace HyperContent
             }
             catch (Exception e)
             {
-                Debug.LogWarning($"[HyperContent] Failed to save cache metadata: {e.Message}");
+                HCLogger.LogWarn($"Failed to save cache metadata: {e.Message}");
             }
         }
         
@@ -479,33 +491,42 @@ namespace HyperContent
                 }
                 
                 var filesToRemove = new List<string>();
-                
+
+                // On-disk bundle files use the sanitized name (see GetBundlePath: '/' and '\\'
+                // become '_'). That mapping is not reversible, so match each file against the
+                // sanitized form of every known metadata key instead of reconstructing the
+                // original name (which wrongly turned every '_' back into '/' and deleted
+                // valid bundles as "orphans").
+                var entryBySafeName = new Dictionary<string, CacheEntry>();
+                foreach (var kv in _cacheMetadata)
+                    entryBySafeName[kv.Key.Replace('/', '_').Replace('\\', '_')] = kv.Value;
+
                 // Check all bundle files
                 foreach (var file in Directory.GetFiles(_cacheRoot, "*" + NamingRules.BUNDLE_FILE_EXTENSION, SearchOption.TopDirectoryOnly))
                 {
-                    string fileName = Path.GetFileNameWithoutExtension(file);
-                    string bundleName = fileName.Replace('_', '/').Replace('_', '\\');
-                    
+                    string safeName = Path.GetFileNameWithoutExtension(file);
+
                     // Check if file exists in metadata
-                    if (!_cacheMetadata.ContainsKey(bundleName))
+                    if (!entryBySafeName.TryGetValue(safeName, out var entry))
                     {
-                        // Orphaned file, remove it
+                        // Orphaned file (no metadata entry) — remove it. Logged so manual
+                        // sideloads / unexpected culls are visible instead of silent.
+                        HCLogger.LogWarn($"Orphaned bundle (no metadata entry), removing: {file}");
                         filesToRemove.Add(file);
                         continue;
                     }
-                    
+
                     // Verify file integrity
-                    var entry = _cacheMetadata[bundleName];
                     var fileInfo = new FileInfo(file);
-                    
+
                     if (fileInfo.Length != entry.size)
                     {
-                        Debug.LogWarning($"[HyperContent] Corrupted bundle detected: {bundleName}, removing");
+                        HCLogger.LogWarn($"Corrupted bundle detected: {entry.bundleName}, removing");
                         filesToRemove.Add(file);
-                        _cacheMetadata.Remove(bundleName);
+                        _cacheMetadata.Remove(entry.bundleName);
                         continue;
                     }
-                    
+
                     // Verify hash if possible
                     try
                     {
@@ -513,16 +534,16 @@ namespace HyperContent
                         string actualHash = ComputeHash(data);
                         if (!string.IsNullOrEmpty(entry.hash) && actualHash != entry.hash)
                         {
-                            Debug.LogWarning($"[HyperContent] Hash mismatch for bundle: {bundleName}, removing");
+                            HCLogger.LogWarn($"Hash mismatch for bundle: {entry.bundleName}, removing");
                             filesToRemove.Add(file);
-                            _cacheMetadata.Remove(bundleName);
+                            _cacheMetadata.Remove(entry.bundleName);
                         }
                     }
                     catch
                     {
                         // File read failed, consider corrupted
                         filesToRemove.Add(file);
-                        _cacheMetadata.Remove(bundleName);
+                        _cacheMetadata.Remove(entry.bundleName);
                     }
                 }
                 
@@ -554,7 +575,7 @@ namespace HyperContent
             }
             catch (Exception e)
             {
-                Debug.LogWarning($"[HyperContent] Cache verification failed: {e.Message}");
+                HCLogger.LogWarn($"Cache verification failed: {e.Message}");
             }
         }
         
